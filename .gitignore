@@ -16,6 +16,9 @@ node_modules/
 # Build output
 mcp/build/
 
+# TLS certs
+certs/
+
 # OS
 .DS_Store
 Thumbs.db
