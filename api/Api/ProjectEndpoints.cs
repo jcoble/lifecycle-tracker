@@ -172,7 +172,7 @@ public static class ProjectEndpoints
                     PhaseCount = m.Phases.Count,
                     m.OrderIndex
                 }),
-                Phases = activeMilestone?.Phases.OrderBy(p => p.OrderIndex).Select(p => new
+                Phases = (activeMilestone?.Phases ?? []).OrderBy(p => p.OrderIndex).Select(p => new
                 {
                     p.Id, p.Name, p.PhaseNumber,
                     Status = p.Status.ToString(),
