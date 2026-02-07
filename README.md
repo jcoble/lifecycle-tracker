@@ -15,23 +15,37 @@ Full-stack project management tool with AI testing system and team orchestration
 - **Activity Feed** — Track all changes with clickable navigation links
 - **Keyboard Shortcuts** — `?` for help, `/` to search, `n` for new task
 
-## Prerequisites
+## Quick Start (Docker)
 
-- [.NET 10 SDK](https://dotnet.microsoft.com/download)
-- [Node.js 20+](https://nodejs.org/) with [pnpm](https://pnpm.io/)
-
-## Quick Start
+The fastest way to get running — no .NET or Node.js install needed:
 
 ```bash
-# Clone
 git clone https://github.com/jcoble/lifecycle-tracker.git
 cd lifecycle-tracker
+docker compose up
+```
 
-# Start everything (API + Web + seed data)
+- **Web UI**: http://localhost:5557
+- **API**: http://localhost:5556
+
+Data is persisted in Docker volumes (`api-data`, `api-uploads`). To start fresh:
+```bash
+docker compose down -v
+```
+
+## Quick Start (Local)
+
+If you prefer running locally:
+
+**Prerequisites**: [.NET 10 SDK](https://dotnet.microsoft.com/download), [Node.js 20+](https://nodejs.org/) with [pnpm](https://pnpm.io/)
+
+```bash
+git clone https://github.com/jcoble/lifecycle-tracker.git
+cd lifecycle-tracker
 ./start.sh
 ```
 
-The start script handles everything: restores packages, applies migrations, seeds initial data, and starts both servers.
+The start script restores packages, applies migrations, seeds sample data, and starts both servers.
 
 - **Web UI**: http://localhost:5557
 - **API**: http://localhost:5556
@@ -45,13 +59,7 @@ If you prefer to start services individually:
 ```bash
 cd api
 dotnet restore
-dotnet ef database update    # Apply migrations (requires dotnet-ef tool)
-dotnet run                   # Starts on port 5556
-```
-
-To install the EF tool if needed:
-```bash
-dotnet tool install --global dotnet-ef
+dotnet run                   # Starts on port 5556, auto-migrates DB
 ```
 
 ### Web (SvelteKit)
@@ -62,11 +70,11 @@ pnpm install
 pnpm dev                     # Starts on port 5557, proxies /api to port 5556
 ```
 
-### Seed Data
+### Seed Data (Optional)
 
 With the API running:
 ```bash
-./seed.sh                    # Creates a default project and milestone
+./seed.sh                    # Creates a default project, milestone, phases, and sample tasks
 ```
 
 ## Project Structure

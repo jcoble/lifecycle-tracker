@@ -11,8 +11,10 @@ builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, relo
 builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 
+var dbConnectionString = builder.Configuration.GetConnectionString("Default")
+    ?? $"Data Source={Path.Combine(builder.Environment.ContentRootPath, "lifecycle.db")}";
 builder.Services.AddDbContext<LifecycleDbContext>(options =>
-    options.UseSqlite($"Data Source={Path.Combine(builder.Environment.ContentRootPath, "lifecycle.db")}"));
+    options.UseSqlite(dbConnectionString));
 
 builder.Services.AddSingleton<SseService>();
 
