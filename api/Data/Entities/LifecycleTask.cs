@@ -19,6 +19,7 @@ public class LifecycleTask
     public DateTime? CompletedAt { get; set; }
     public string? GitCommitSha { get; set; }
     public string? GitBranch { get; set; }
+    public string? PullRequestUrl { get; set; }
     public string? ConversationRef { get; set; }
     public TestLevel? RequiredTestLevel { get; set; }
     public TestAutonomyLevel? TestAutonomyLevel { get; set; }

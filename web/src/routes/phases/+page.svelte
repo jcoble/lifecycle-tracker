@@ -1,13 +1,17 @@
 <script lang="ts">
-	import { createQuery } from '@tanstack/svelte-query';
+	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { phases as phasesApi } from '$lib/api/endpoints/phases';
 	import { milestones as milestonesApi } from '$lib/api/endpoints/milestones';
 	import StatusBadge from '$lib/components/shared/StatusBadge.svelte';
-	import { ArrowRight } from '@lucide/svelte';
+	import CreatePhaseDialog from '$lib/components/phases/CreatePhaseDialog.svelte';
+	import { ArrowRight, Plus } from '@lucide/svelte';
+	import { getCurrentProjectId } from '$lib/stores/project.svelte';
+
+	const queryClient = useQueryClient();
 
 	const milestonesQuery = createQuery(() => ({
-		queryKey: ['milestones'],
-		queryFn: () => milestonesApi.list(1),
+		queryKey: ['milestones', getCurrentProjectId()],
+		queryFn: () => milestonesApi.list(getCurrentProjectId()),
 	}));
 
 	let activeMilestone = $derived(
@@ -24,6 +28,8 @@
 	let sortedPhases = $derived(
 		[...(phasesQuery.data || [])].sort((a, b) => a.phaseNumber - b.phaseNumber)
 	);
+
+	let showCreateDialog = $state(false);
 </script>
 
 <svelte:head>
@@ -31,10 +37,21 @@
 </svelte:head>
 
 <div class="h-full overflow-y-auto p-6">
-	<div class="mb-6">
-		<h1 class="text-2xl font-bold text-text-primary">Phases</h1>
+	<div class="mb-6 flex items-center justify-between">
+		<div>
+			<h1 class="text-2xl font-bold text-text-primary">Phases</h1>
+			{#if activeMilestone}
+				<p class="mt-1 text-sm text-text-secondary">{activeMilestone.name}</p>
+			{/if}
+		</div>
 		{#if activeMilestone}
-			<p class="mt-1 text-sm text-text-secondary">{activeMilestone.name}</p>
+			<button
+				onclick={() => (showCreateDialog = true)}
+				class="flex items-center gap-1 rounded-md bg-accent px-3 py-1.5 text-sm text-white transition-colors hover:bg-accent-hover"
+			>
+				<Plus class="h-3.5 w-3.5" />
+				Add Phase
+			</button>
 		{/if}
 	</div>
 
@@ -87,3 +104,15 @@
 		</div>
 	{/if}
 </div>
+
+{#if showCreateDialog && activeMilestone}
+	<CreatePhaseDialog
+		milestoneId={activeMilestone.id}
+		milestoneName={activeMilestone.name}
+		onCreated={() => {
+			queryClient.invalidateQueries({ queryKey: ['phases'] });
+			showCreateDialog = false;
+		}}
+		onClose={() => (showCreateDialog = false)}
+	/>
+{/if}

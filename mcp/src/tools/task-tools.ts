@@ -1,13 +1,13 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { api } from '../api-client.js';
+import { api, getActiveProjectId } from '../api-client.js';
 
 export function registerTaskTools(server: McpServer) {
   server.tool(
     'create_tasks',
     'Create multiple tasks at once from a conversation breakdown',
     {
-      projectId: z.number().default(1).describe('Project ID for activity logging'),
+      projectId: z.number().optional().describe('Project ID for activity logging (uses active project if omitted)'),
       phaseId: z.number().optional().describe('Phase ID to assign tasks to'),
       tasks: z.array(z.object({
         title: z.string(),
@@ -18,7 +18,8 @@ export function registerTaskTools(server: McpServer) {
       })).describe('Array of tasks to create'),
     },
     async ({ projectId, phaseId, tasks }) => {
-      const result = await api.post('/ai/tasks/bulk-create', { projectId, phaseId, tasks });
+      const pid = projectId ?? getActiveProjectId();
+      const result = await api.post('/ai/tasks/bulk-create', { projectId: pid, phaseId, tasks });
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     }
   );
@@ -42,12 +43,14 @@ export function registerTaskTools(server: McpServer) {
       taskId: z.number().describe('Task ID to complete'),
       commitSha: z.string().optional().describe('Git commit SHA'),
       gitBranch: z.string().optional().describe('Git branch name'),
+      prUrl: z.string().optional().describe('Pull request URL'),
     },
-    async ({ taskId, commitSha, gitBranch }) => {
+    async ({ taskId, commitSha, gitBranch, prUrl }) => {
       const result = await api.post(`/ai/tasks/${taskId}/transition`, {
         status: 'Done',
         gitCommitSha: commitSha,
         gitBranch,
+        pullRequestUrl: prUrl,
       });
       return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     }

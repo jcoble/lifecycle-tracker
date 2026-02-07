@@ -23,9 +23,22 @@ export interface Project {
 	description?: string;
 	repository?: string;
 	status: ProjectStatus;
+	settings?: string;
 	createdAt: string;
 	updatedAt: string;
 	milestonesCount?: number;
+}
+
+export interface ProjectSettings {
+	language?: string;
+	framework?: string;
+	repositoryRoot?: string;
+	devUrl?: string;
+	apiUrl?: string;
+	unitTestCommand?: string;
+	integrationTestCommand?: string;
+	webTestTool?: string;
+	[key: string]: string | undefined;
 }
 
 export interface Milestone {
@@ -79,9 +92,9 @@ export interface Task {
 	completedAt?: string;
 	gitCommitSha?: string;
 	gitBranch?: string;
+	pullRequestUrl?: string;
 	conversationRef?: string;
 	requiredTestLevel?: TestLevel;
-	testAutonomyLevel?: TestAutonomyLevel;
 	createdAt: string;
 	updatedAt: string;
 	labels?: Label[];
@@ -249,6 +262,7 @@ export interface TeamMember {
 	status: string;
 	configJson?: string;
 	spawnPromptTemplate?: string;
+	triggerStatuses?: string;
 	createdAt: string;
 	lastActiveAt?: string;
 	currentSession?: {

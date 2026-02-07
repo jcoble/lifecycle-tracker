@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Task, TaskStatus, TaskPriority, TaskType, TestLevel, TestAutonomyLevel, TestPlan, Comment, Phase, Attachment } from '$lib/types';
+	import type { Task, TaskStatus, TaskPriority, TaskType, TestLevel, TestPlan, Comment, Phase, Attachment } from '$lib/types';
 	import { tasks as tasksApi } from '$lib/api/endpoints/tasks';
 	import { comments as commentsApi } from '$lib/api/endpoints/comments';
 	import { testPlans as testPlansApi } from '$lib/api/endpoints/testPlans';
@@ -13,17 +13,20 @@
 	import MarkdownEditor from '$lib/components/shared/MarkdownEditor.svelte';
 	import ClipboardDropZone from './ClipboardDropZone.svelte';
 	import { formatRelative, formatDate } from '$lib/utils/date';
+	import { buildCommitUrl, buildBranchUrl } from '$lib/utils/git';
 	import { X, Send, Paperclip, GitBranch, MessageSquare, Trash2, FlaskConical } from '@lucide/svelte';
 
 	let {
 		task,
 		phases = [] as Phase[],
+		repositoryUrl,
 		onclose,
 		onupdate,
 		ondelete,
 	}: {
 		task: Task;
 		phases?: Phase[];
+		repositoryUrl?: string;
 		onclose?: () => void;
 		onupdate?: (task: Task) => void;
 		ondelete?: (taskId: number) => void;
@@ -50,7 +53,7 @@
 	const priorities: TaskPriority[] = ['P1', 'P2', 'P3', 'P4'];
 	const types: TaskType[] = ['Feature', 'Bug', 'Refactor', 'Docs', 'Test', 'Infra', 'Research'];
 	const testLevels: (TestLevel | '')[] = ['', 'Smoke', 'Functional', 'Comprehensive', 'FullE2E'];
-	const autonomyLevels: (TestAutonomyLevel | '')[] = ['', 'Manual', 'SemiAuto', 'AutoCreate', 'FullAuto'];
+	// TestAutonomyLevel is now a project-level setting, not per-task
 
 	async function loadFullTask() {
 		const full = await tasksApi.get(task.id);
@@ -247,22 +250,7 @@
 				</select>
 			</div>
 
-			<!-- Autonomy Level -->
-			<div>
-				<label class="mb-1 block text-xs text-text-tertiary">Test Autonomy</label>
-				<select
-					value={task.testAutonomyLevel || ''}
-					onchange={(e) => updateField('testAutonomyLevel', e.currentTarget.value || null)}
-					class="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-text-primary focus:border-accent focus:outline-none"
-				>
-					<option value="">None</option>
-					<option value="Manual">Manual</option>
-					<option value="SemiAuto">Semi-Auto</option>
-					<option value="AutoCreate">Auto-Create</option>
-					<option value="FullAuto">Full-Auto</option>
-				</select>
 			</div>
-		</div>
 
 		<!-- Testing Requirement Badge -->
 		{#if task.requiredTestLevel}
@@ -274,10 +262,18 @@
 			<div class="flex items-center gap-2 text-xs text-text-tertiary">
 				<GitBranch class="h-3 w-3" />
 				{#if task.gitBranch}
-					<span class="font-mono">{task.gitBranch}</span>
+					{#if repositoryUrl}
+						<a href={buildBranchUrl(repositoryUrl, task.gitBranch)} target="_blank" rel="noopener" class="font-mono text-accent hover:underline">{task.gitBranch}</a>
+					{:else}
+						<span class="font-mono">{task.gitBranch}</span>
+					{/if}
 				{/if}
 				{#if task.gitCommitSha}
-					<span class="font-mono">{task.gitCommitSha.slice(0, 7)}</span>
+					{#if repositoryUrl}
+						<a href={buildCommitUrl(repositoryUrl, task.gitCommitSha)} target="_blank" rel="noopener" class="font-mono text-accent hover:underline">{task.gitCommitSha.slice(0, 7)}</a>
+					{:else}
+						<span class="font-mono">{task.gitCommitSha.slice(0, 7)}</span>
+					{/if}
 				{/if}
 			</div>
 		{/if}

@@ -5,6 +5,8 @@ import { registerTaskTools } from './tools/task-tools.js';
 import { registerPhaseTools } from './tools/phase-tools.js';
 import { registerTestTools } from './tools/test-tools.js';
 import { registerContextTools } from './tools/context-tools.js';
+import { registerTeamTools } from './tools/team-tools.js';
+import { registerMilestoneTools } from './tools/milestone-tools.js';
 
 const server = new McpServer({
   name: 'lifecycle',
@@ -16,6 +18,8 @@ registerTaskTools(server);
 registerPhaseTools(server);
 registerTestTools(server);
 registerContextTools(server);
+registerTeamTools(server);
+registerMilestoneTools(server);
 
 async function main() {
   const transport = new StdioServerTransport();

@@ -12,10 +12,11 @@
 		Plus,
 		ArrowRight
 	} from '@lucide/svelte';
+	import { getCurrentProjectId } from '$lib/stores/project.svelte';
 
 	const dashboardQuery = createQuery(() => ({
-		queryKey: ['dashboard'],
-		queryFn: () => projects.dashboard(1),
+		queryKey: ['dashboard', getCurrentProjectId()],
+		queryFn: () => projects.dashboard(getCurrentProjectId()),
 	}));
 </script>
 
@@ -85,7 +86,7 @@
 							<h2 class="font-semibold text-text-primary">Active Milestone</h2>
 							<StatusBadge status={data.activeMilestone.status} />
 						</div>
-						<p class="mb-1 text-sm text-text-primary">{data.activeMilestone.name}</p>
+						<a href="/milestones/{data.activeMilestone.id}" class="mb-1 block text-sm text-text-primary hover:text-accent transition-colors">{data.activeMilestone.name}</a>
 						{#if data.activeMilestone.version}
 							<p class="mb-3 text-xs text-text-tertiary">v{data.activeMilestone.version}</p>
 						{/if}

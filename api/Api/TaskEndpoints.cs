@@ -73,7 +73,6 @@ public static class TaskEndpoints
                 OrderInColumn = maxOrder + 1,
                 DueDate = req.DueDate,
                 RequiredTestLevel = req.RequiredTestLevel,
-                TestAutonomyLevel = req.TestAutonomyLevel,
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow
             };
@@ -142,9 +141,9 @@ public static class TaskEndpoints
             if (req.PhaseId.HasValue) task.PhaseId = req.PhaseId.Value;
             if (req.GitCommitSha is not null) task.GitCommitSha = req.GitCommitSha;
             if (req.GitBranch is not null) task.GitBranch = req.GitBranch;
+            if (req.PullRequestUrl is not null) task.PullRequestUrl = req.PullRequestUrl;
             if (req.ConversationRef is not null) task.ConversationRef = req.ConversationRef;
             if (req.RequiredTestLevel.HasValue) task.RequiredTestLevel = req.RequiredTestLevel.Value;
-            if (req.TestAutonomyLevel.HasValue) task.TestAutonomyLevel = req.TestAutonomyLevel.Value;
 
             if (req.Status.HasValue && req.Status.Value != task.Status)
             {
@@ -240,9 +239,8 @@ public static class TaskEndpoints
         Type = t.Type.ToString(),
         Source = t.Source.ToString(),
         t.OrderInColumn, t.DueDate, t.StartedAt, t.CompletedAt,
-        t.GitCommitSha, t.GitBranch, t.ConversationRef,
+        t.GitCommitSha, t.GitBranch, t.PullRequestUrl, t.ConversationRef,
         RequiredTestLevel = t.RequiredTestLevel?.ToString(),
-        TestAutonomyLevel = t.TestAutonomyLevel?.ToString(),
         t.CreatedAt, t.UpdatedAt,
         Labels = t.TaskLabels.Select(tl => new { tl.Label.Id, tl.Label.Name, tl.Label.Color })
     };
@@ -255,9 +253,8 @@ public static class TaskEndpoints
         Type = t.Type.ToString(),
         Source = t.Source.ToString(),
         t.OrderInColumn, t.DueDate, t.StartedAt, t.CompletedAt,
-        t.GitCommitSha, t.GitBranch, t.ConversationRef,
+        t.GitCommitSha, t.GitBranch, t.PullRequestUrl, t.ConversationRef,
         RequiredTestLevel = t.RequiredTestLevel?.ToString(),
-        TestAutonomyLevel = t.TestAutonomyLevel?.ToString(),
         t.CreatedAt, t.UpdatedAt,
         Labels = t.TaskLabels.Select(tl => new { tl.Label.Id, tl.Label.Name, tl.Label.Color }),
         Tests = t.Tests.Select(tr => new
@@ -289,8 +286,7 @@ public record CreateTaskRequest(
     TaskSource? Source = null,
     DateTime? DueDate = null,
     List<int>? LabelIds = null,
-    TestLevel? RequiredTestLevel = null,
-    TestAutonomyLevel? TestAutonomyLevel = null);
+    TestLevel? RequiredTestLevel = null);
 
 public record UpdateTaskRequest(
     string? Title = null,
@@ -303,10 +299,10 @@ public record UpdateTaskRequest(
     DateTime? DueDate = null,
     string? GitCommitSha = null,
     string? GitBranch = null,
+    string? PullRequestUrl = null,
     string? ConversationRef = null,
     List<int>? LabelIds = null,
-    TestLevel? RequiredTestLevel = null,
-    TestAutonomyLevel? TestAutonomyLevel = null);
+    TestLevel? RequiredTestLevel = null);
 
 public record MoveTaskRequest(TaskStatus Status, int OrderInColumn);
 public record ReorderRequest(TaskStatus Status, List<ReorderItem> Items);

@@ -6,7 +6,8 @@
 	import TestingRequirementBadge from '$lib/components/testing/TestingRequirementBadge.svelte';
 	import { formatDate } from '$lib/utils/date';
 	import { pasteScreenshotToTask } from '$lib/utils/clipboard';
-	import { Calendar, ClipboardPaste } from '@lucide/svelte';
+	import { extractPrLabel } from '$lib/utils/git';
+	import { Calendar, ClipboardPaste, GitBranch, GitPullRequest } from '@lucide/svelte';
 
 	let { task, onclick }: { task: Task; onclick?: (task: Task) => void } = $props();
 	let showPaste = $state(false);
@@ -79,6 +80,24 @@
 
 		{#if task.phaseName}
 			<span class="truncate text-[10px]">{task.phaseName}</span>
+		{/if}
+
+		{#if task.gitBranch}
+			<span class="flex items-center gap-0.5 text-[10px] font-mono truncate max-w-[100px]"
+				title={task.gitBranch}>
+				<GitBranch class="h-2.5 w-2.5 shrink-0" />
+				{task.gitBranch.split('/').pop()}
+			</span>
+		{/if}
+
+		{#if task.pullRequestUrl}
+			<a href={task.pullRequestUrl} target="_blank" rel="noopener"
+				class="flex items-center gap-0.5 text-[10px] text-accent hover:underline"
+				title="Pull Request"
+				onclick={(e) => e.stopPropagation()}>
+				<GitPullRequest class="h-2.5 w-2.5 shrink-0" />
+				{extractPrLabel(task.pullRequestUrl)}
+			</a>
 		{/if}
 
 		{#if task.dueDate}

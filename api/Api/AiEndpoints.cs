@@ -142,6 +142,10 @@ public static class AiEndpoints
             else if (oldStatus == TaskStatus.Done)
                 task.CompletedAt = null;
 
+            if (req.GitCommitSha is not null) task.GitCommitSha = req.GitCommitSha;
+            if (req.GitBranch is not null) task.GitBranch = req.GitBranch;
+            if (req.PullRequestUrl is not null) task.PullRequestUrl = req.PullRequestUrl;
+
             await db.SaveChangesAsync();
 
             // Log activity
@@ -154,10 +158,37 @@ public static class AiEndpoints
 
             await sse.BroadcastAsync("task:moved", new { task.Id, OldStatus = oldStatus.ToString(), NewStatus = req.Status.ToString() });
 
+            // Find triggered team members for this status change
+            var newStatusStr = req.Status.ToString();
+            int? projectId = task.Phase?.Milestone?.ProjectId;
+            object[]? triggeredAgents = null;
+            if (projectId.HasValue)
+            {
+                var project = await db.Projects.FindAsync(projectId.Value);
+                var settings = project is not null
+                    ? TeamEndpoints.ParseSettings(project)
+                    : new Dictionary<string, string>();
+
+                var members = await db.TeamMembers
+                    .Where(tm => tm.ProjectId == projectId.Value && tm.TriggerStatuses != null)
+                    .ToListAsync();
+                triggeredAgents = members
+                    .Where(tm => tm.TriggerStatuses != null && tm.TriggerStatuses.Contains($"\"{newStatusStr}\""))
+                    .Select(tm => (object)new
+                    {
+                        tm.Id, tm.AgentName, tm.Role, tm.ModelName,
+                        tm.SpawnPromptTemplate,
+                        ResolvedPrompt = TeamEndpoints.ResolvePromptVariables(tm.SpawnPromptTemplate, settings),
+                        tm.TriggerStatuses
+                    })
+                    .ToArray();
+            }
+
             return Results.Ok(new
             {
                 task.Id, task.Title, Status = task.Status.ToString(),
-                task.StartedAt, task.CompletedAt
+                task.StartedAt, task.CompletedAt,
+                TriggeredAgents = triggeredAgents ?? Array.Empty<object>()
             });
         });
 
@@ -384,7 +415,7 @@ public record PhaseBreakdownRequest(
     List<PhaseBreakdownTask> Tasks = null!);
 public record PhaseBreakdownTask(string Title, string? Description = null, TaskPriority? Priority = null, TaskType? Type = null);
 
-public record TaskTransitionRequest(TaskStatus Status);
+public record TaskTransitionRequest(TaskStatus Status, string? GitCommitSha = null, string? GitBranch = null, string? PullRequestUrl = null);
 
 public record AiRecordTestRequest(int TaskId, TestType TestType, string? TestName = null, string? TestFile = null, string? Framework = null);
 public record AiTestResultRequest(int TestId, bool Passed, string? Result = null, string? Output = null);

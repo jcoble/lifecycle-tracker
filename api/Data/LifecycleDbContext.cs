@@ -35,6 +35,7 @@ public class LifecycleDbContext : DbContext
             entity.Property(e => e.Name).IsRequired().HasMaxLength(200);
             entity.Property(e => e.Description).HasMaxLength(2000);
             entity.Property(e => e.Repository).HasMaxLength(500);
+            entity.Property(e => e.Settings).HasMaxLength(10000);
             entity.HasIndex(e => e.Status);
         });
 
@@ -72,6 +73,7 @@ public class LifecycleDbContext : DbContext
             entity.Property(e => e.Title).IsRequired().HasMaxLength(200);
             entity.Property(e => e.GitCommitSha).HasMaxLength(40);
             entity.Property(e => e.GitBranch).HasMaxLength(200);
+            entity.Property(e => e.PullRequestUrl).HasMaxLength(500);
             entity.Property(e => e.ConversationRef).HasMaxLength(500);
             entity.HasIndex(e => e.PhaseId);
             entity.HasIndex(e => new { e.Status, e.OrderInColumn });
@@ -222,6 +224,7 @@ public class LifecycleDbContext : DbContext
             entity.Property(e => e.AgentName).IsRequired().HasMaxLength(100);
             entity.Property(e => e.ModelName).IsRequired().HasMaxLength(100);
             entity.Property(e => e.Status).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.TriggerStatuses).HasMaxLength(500);
             entity.HasIndex(e => e.ProjectId);
             entity.HasOne(e => e.Project)
                 .WithMany()

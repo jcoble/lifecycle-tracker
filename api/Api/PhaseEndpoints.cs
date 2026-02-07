@@ -114,10 +114,34 @@ public static class PhaseEndpoints
 
         directGroup.MapDelete("/{id:int}", async (int id, LifecycleDbContext db) =>
         {
-            var phase = await db.Phases.FindAsync(id);
+            var phase = await db.Phases.Include(p => p.Tasks).FirstOrDefaultAsync(p => p.Id == id);
             if (phase is null) return Results.NotFound();
+
+            await using var transaction = await db.Database.BeginTransactionAsync();
+
+            // Unassign tasks from this phase
+            foreach (var task in phase.Tasks)
+                task.PhaseId = null;
+
+            // Remove this phase ID from DependsOnPhaseIds of other phases in the same milestone
+            var siblingPhases = await db.Phases
+                .Where(p => p.MilestoneId == phase.MilestoneId && p.Id != id && p.DependsOnPhaseIds != null)
+                .ToListAsync();
+            foreach (var sibling in siblingPhases)
+            {
+                if (sibling.DependsOnPhaseIds is not null && sibling.DependsOnPhaseIds.Contains(id.ToString()))
+                {
+                    var ids = sibling.DependsOnPhaseIds.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                        .Where(x => x.Trim() != id.ToString())
+                        .ToList();
+                    sibling.DependsOnPhaseIds = ids.Count > 0 ? string.Join(",", ids) : null;
+                }
+            }
+
             db.Phases.Remove(phase);
             await db.SaveChangesAsync();
+            await transaction.CommitAsync();
+
             return Results.NoContent();
         });
 

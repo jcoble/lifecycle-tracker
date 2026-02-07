@@ -94,8 +94,9 @@ public static class MilestoneEndpoints
 
         directGroup.MapDelete("/{id:int}", async (int id, LifecycleDbContext db) =>
         {
-            var milestone = await db.Milestones.FindAsync(id);
+            var milestone = await db.Milestones.Include(m => m.Phases).FirstOrDefaultAsync(m => m.Id == id);
             if (milestone is null) return Results.NotFound();
+            if (milestone.Phases.Any()) return Results.Conflict("Cannot delete milestone with existing phases. Delete all phases first.");
             db.Milestones.Remove(milestone);
             await db.SaveChangesAsync();
             return Results.NoContent();

@@ -1,14 +1,18 @@
 <script lang="ts">
-	import { createQuery } from '@tanstack/svelte-query';
+	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { milestones as milestonesApi } from '$lib/api/endpoints/milestones';
 	import StatusBadge from '$lib/components/shared/StatusBadge.svelte';
+	import CreateMilestoneDialog from '$lib/components/milestones/CreateMilestoneDialog.svelte';
 	import { formatDate } from '$lib/utils/date';
 	import type { Milestone } from '$lib/types';
-	import { Target, Calendar } from '@lucide/svelte';
+	import { Target, Calendar, Plus } from '@lucide/svelte';
+	import { getCurrentProjectId } from '$lib/stores/project.svelte';
+
+	const queryClient = useQueryClient();
 
 	const milestonesQuery = createQuery(() => ({
-		queryKey: ['milestones'],
-		queryFn: () => milestonesApi.list(1),
+		queryKey: ['milestones', getCurrentProjectId()],
+		queryFn: () => milestonesApi.list(getCurrentProjectId()),
 	}));
 
 	let grouped = $derived.by(() => {
@@ -28,7 +32,7 @@
 		return groups;
 	});
 
-	let selectedMilestoneId = $state<number | null>(null);
+	let showCreateDialog = $state(false);
 </script>
 
 <svelte:head>
@@ -36,8 +40,15 @@
 </svelte:head>
 
 <div class="h-full overflow-y-auto p-6">
-	<div class="mb-6">
+	<div class="mb-6 flex items-center justify-between">
 		<h1 class="text-2xl font-bold text-text-primary">Milestones</h1>
+		<button
+			onclick={() => (showCreateDialog = true)}
+			class="flex items-center gap-1 rounded-md bg-accent px-3 py-1.5 text-sm text-white transition-colors hover:bg-accent-hover"
+		>
+			<Plus class="h-3.5 w-3.5" />
+			New Milestone
+		</button>
 	</div>
 
 	{#if milestonesQuery.isLoading}
@@ -49,9 +60,9 @@
 					<h2 class="mb-3 text-sm font-semibold uppercase tracking-wider text-text-tertiary">{group}</h2>
 					<div class="space-y-3">
 						{#each items as milestone}
-							<button
-								class="w-full rounded-lg border border-border bg-surface p-4 text-left transition-colors hover:border-border-hover"
-								onclick={() => (selectedMilestoneId = selectedMilestoneId === milestone.id ? null : milestone.id)}
+							<a
+								href="/milestones/{milestone.id}"
+								class="block rounded-lg border border-border bg-surface p-4 transition-colors hover:border-border-hover"
 							>
 								<div class="flex items-start justify-between">
 									<div class="flex items-center gap-3">
@@ -82,22 +93,7 @@
 										<span>{completedPhases}/{milestone.phases.length} phases completed</span>
 									{/if}
 								</div>
-
-								{#if selectedMilestoneId === milestone.id && milestone.phases}
-									<div class="mt-4 space-y-2 border-t border-border pl-8 pt-4">
-										<h4 class="text-xs font-semibold uppercase text-text-tertiary">Phases</h4>
-										{#each milestone.phases as phase}
-											<a
-												href="/phases/{phase.id}"
-												class="flex items-center justify-between rounded-md border border-border bg-bg p-2 transition-colors hover:border-border-hover"
-											>
-												<span class="text-sm text-text-primary">{phase.name}</span>
-												<StatusBadge status={phase.status} />
-											</a>
-										{/each}
-									</div>
-								{/if}
-							</button>
+							</a>
 						{/each}
 					</div>
 				</div>
@@ -105,3 +101,11 @@
 		{/each}
 	{/if}
 </div>
+
+{#if showCreateDialog}
+	<CreateMilestoneDialog
+		projectId={getCurrentProjectId()}
+		onCreated={() => queryClient.invalidateQueries({ queryKey: ['milestones', getCurrentProjectId()] })}
+		onClose={() => (showCreateDialog = false)}
+	/>
+{/if}
