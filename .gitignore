@@ -1,0 +1,27 @@
+# Logs
+.api.log
+.web.log
+
+# .NET
+api/bin/
+api/obj/
+api/lifecycle.db
+api/lifecycle.db-shm
+api/lifecycle.db-wal
+api/uploads/
+
+# Node
+node_modules/
+
+# Build output
+mcp/build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
