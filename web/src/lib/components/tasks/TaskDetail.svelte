@@ -59,7 +59,11 @@
 	}
 
 	async function loadTestPlans() {
-		taskTestPlans = await testPlansApi.listForTask(task.id);
+		try {
+			taskTestPlans = await testPlansApi.listForTask(task.id) || [];
+		} catch {
+			taskTestPlans = [];
+		}
 	}
 
 	async function handleTestPlanCreated() {
