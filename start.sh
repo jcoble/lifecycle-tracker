@@ -67,7 +67,7 @@ rm -f "$PIDS_FILE"
 echo ""
 echo -e "${BLUE}Starting API server on port 5556...${NC}"
 cd "$API_DIR"
-dotnet run --no-launch-profile > "$SCRIPT_DIR/.api.log" 2>&1 &
+dotnet watch run --no-launch-profile > "$SCRIPT_DIR/.api.log" 2>&1 &
 API_PID=$!
 echo "$API_PID" > "$PIDS_FILE"
 echo -e "${GREEN}✓ API started (PID: $API_PID)${NC}"

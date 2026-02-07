@@ -22,11 +22,13 @@ The fastest way to get running — no .NET or Node.js install needed:
 ```bash
 git clone https://github.com/jcoble/lifecycle-tracker.git
 cd lifecycle-tracker
+cp .env.example .env
+# Edit .env — set API_KEY and ORIGIN for your deployment
 docker compose up
 ```
 
-- **Web UI**: http://localhost:5557
-- **API**: http://localhost:5556
+- **Web UI**: http://localhost (via Caddy) or http://localhost:5557 (direct)
+- **API**: http://localhost/api (via Caddy) or http://localhost:5556 (direct)
 
 Data is persisted in Docker volumes (`api-data`, `api-uploads`). To start fresh:
 ```bash
@@ -134,15 +136,70 @@ lifecycle-tracker/
 | Drag & Drop | svelte-dnd-action |
 | MCP | Model Context Protocol SDK (optional Claude integration) |
 
-## MCP Server (Optional)
+## MCP Server (Claude Code Integration)
 
-The `mcp/` directory contains an MCP server that exposes lifecycle operations as tools for Claude:
+The `mcp/` directory contains an MCP server that exposes lifecycle operations as tools for Claude Code sessions.
+
+### Setup
 
 ```bash
-cd mcp
-npm install
-npm run build
-npm start
+# 1. Build the MCP server
+cd mcp && npm install && npm run build && cd ..
+
+# 2. Register with Claude Code (one-time)
+claude mcp add lifecycle \
+  -s user \
+  -e LIFECYCLE_API_URL=http://localhost:5556 \
+  -e LIFECYCLE_API_KEY=your-api-key-here \
+  -- node /path/to/lifecycle-tracker/mcp/build/index.js
+```
+
+For a remote deployment (e.g. shared server):
+```bash
+claude mcp add lifecycle \
+  -s user \
+  -e LIFECYCLE_API_URL=https://your-server.example.com/api \
+  -e LIFECYCLE_API_KEY=your-api-key-here \
+  -- node /path/to/lifecycle-tracker/mcp/build/index.js
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LIFECYCLE_API_URL` | `http://localhost:5556` | API base URL |
+| `LIFECYCLE_API_KEY` | *(empty)* | API key for authentication |
+
+### Available MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `get_project_context` | Load full project state: milestone, phases, tasks, activity |
+| `search_tasks` | Search/filter tasks by title, status, priority, phase |
+| `get_activity` | Get recent activity feed |
+| `get_metrics` | Dashboard metrics: task counts, test stats, phase progress |
+| `create_tasks` | Bulk-create tasks from a conversation |
+| `start_task` | Move a task to InProgress |
+| `complete_task` | Move a task to Done (with optional commit SHA) |
+| `create_phase` | Create a new phase within a milestone |
+| `breakdown_phase` | Create a phase + all its tasks in one call |
+| `record_test` | Record that a test was created for a task |
+| `record_test_result` | Record pass/fail result of a test run |
+| `upload_screenshot` | Upload a base64 screenshot to a task |
+
+## API Key Authentication
+
+When `API_KEY` is set (via `.env` for Docker or `appsettings.Local.json` for local dev):
+
+- **Browser requests** (with `Origin`/`Referer` header) bypass auth — the web UI works without a key
+- **Programmatic access** (MCP, curl, scripts) requires `X-API-Key` header
+- **No key set** = all requests pass through (local dev only)
+
+Generate a key: `openssl rand -hex 16`
+
+For local development, create `api/appsettings.Local.json`:
+```json
+{"ApiKey": "your-generated-key"}
 ```
 
 ## License

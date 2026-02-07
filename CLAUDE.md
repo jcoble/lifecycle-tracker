@@ -4,35 +4,35 @@ A project management tool with kanban board, test plans, and team orchestration.
 
 ## Access
 
-| Service | URL (Tailscale) |
-|---------|----------------|
-| Web UI  | http://100.106.218.96:5557 |
-| API     | http://100.106.218.96:5556 |
+| Service | URL (Tailscale) | URL (Local Dev) |
+|---------|----------------|-----------------|
+| Web UI  | https://cloud-server.chimp-map.ts.net | http://localhost:5557 |
+| API     | https://cloud-server.chimp-map.ts.net/api | http://localhost:5556 |
 
 ## MCP Server
 
-The MCP server lets any Claude session manage tasks, phases, and tests programmatically. It connects to the Lifecycle API and exposes tools.
+The MCP server lets any Claude session manage tasks, phases, and tests programmatically.
 
-### Setup
+### Setup (Claude Code CLI)
 
-Add to your Claude Code MCP config (`~/.claude/mcp.json` or project `.mcp.json`):
+```bash
+# Build first
+cd mcp && npm install && npm run build && cd ..
 
-```json
-{
-  "mcpServers": {
-    "lifecycle": {
-      "command": "node",
-      "args": ["/path/to/lifecycle-tracker/mcp/build/index.js"],
-      "env": {
-        "LIFECYCLE_API_URL": "http://100.106.218.96:5556",
-        "LIFECYCLE_API_KEY": ""
-      }
-    }
-  }
-}
+# Register with Claude Code (points at Hetzner shared instance)
+claude mcp add lifecycle -s user \
+  -e LIFECYCLE_API_URL=https://cloud-server.chimp-map.ts.net/api \
+  -e LIFECYCLE_API_KEY=<your-api-key> \
+  -- node /path/to/lifecycle-tracker/mcp/build/index.js
 ```
 
-Build first: `cd mcp && npm install && npm run build`
+For local dev:
+```bash
+claude mcp add lifecycle -s user \
+  -e LIFECYCLE_API_URL=http://localhost:5556 \
+  -e LIFECYCLE_API_KEY=<your-api-key> \
+  -- node /path/to/lifecycle-tracker/mcp/build/index.js
+```
 
 ### Available MCP Tools
 

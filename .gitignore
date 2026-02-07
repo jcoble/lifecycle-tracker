@@ -9,6 +9,10 @@ api/lifecycle.db
 api/lifecycle.db-shm
 api/lifecycle.db-wal
 api/uploads/
+api/appsettings.Local.json
+
+# Environment
+.env
 
 # Node
 node_modules/

@@ -2,8 +2,8 @@ services:
   caddy:
     image: caddy:2-alpine
     ports:
-      - "443:443"
-      - "80:80"
+      - "${CADDY_HTTPS_PORT:-443}:443"
+      - "${CADDY_HTTP_PORT:-80}:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./certs:/certs:ro
@@ -25,6 +25,7 @@ services:
       - api-uploads:/app/uploads
     environment:
       - ConnectionStrings__Default=Data Source=/app/data/lifecycle.db
+      - ApiKey=${API_KEY:-}
     deploy:
       resources:
         limits:
@@ -36,7 +37,7 @@ services:
     build: ./web
     environment:
       - API_URL=http://api:5556
-      - ORIGIN=https://cloud-server.chimp-map.ts.net
+      - ORIGIN=${ORIGIN:-http://localhost}
     deploy:
       resources:
         limits:
