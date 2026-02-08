@@ -75,8 +75,13 @@ public class LifecycleDbContext : DbContext
             entity.Property(e => e.GitBranch).HasMaxLength(200);
             entity.Property(e => e.PullRequestUrl).HasMaxLength(500);
             entity.Property(e => e.ConversationRef).HasMaxLength(500);
+            entity.HasIndex(e => e.ProjectId);
             entity.HasIndex(e => e.PhaseId);
             entity.HasIndex(e => new { e.Status, e.OrderInColumn });
+            entity.HasOne(e => e.Project)
+                .WithMany()
+                .HasForeignKey(e => e.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(e => e.Phase)
                 .WithMany(p => p.Tasks)
                 .HasForeignKey(e => e.PhaseId)

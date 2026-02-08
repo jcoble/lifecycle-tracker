@@ -6,6 +6,7 @@ namespace Lifecycle.Data.Entities;
 public class LifecycleTask
 {
     public int Id { get; set; }
+    public int ProjectId { get; set; }
     public int? PhaseId { get; set; }
     public required string Title { get; set; }
     public string? Description { get; set; }
@@ -25,6 +26,7 @@ public class LifecycleTask
     public TestAutonomyLevel? TestAutonomyLevel { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
+    public Project Project { get; set; } = null!;
     public Phase? Phase { get; set; }
     public ICollection<TestRecord> Tests { get; set; } = new List<TestRecord>();
     public ICollection<TestPlan> TestPlans { get; set; } = new List<TestPlan>();

@@ -3,6 +3,7 @@ using System;
 using Lifecycle.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Lifecycle.Migrations
 {
     [DbContext(typeof(LifecycleDbContext))]
-    partial class LifecycleDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260207220629_AddTriggerStatuses")]
+    partial class AddTriggerStatuses
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.1");
@@ -110,13 +113,6 @@ namespace Lifecycle.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTime?>("CompletedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("CurrentActivity")
-                        .HasMaxLength(500)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime?>("LastHeartbeatAt")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("SessionId")
@@ -299,13 +295,6 @@ namespace Lifecycle.Migrations
                     b.Property<int>("Priority")
                         .HasColumnType("INTEGER");
 
-                    b.Property<int>("ProjectId")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("PullRequestUrl")
-                        .HasMaxLength(500)
-                        .HasColumnType("TEXT");
-
                     b.Property<int?>("RequiredTestLevel")
                         .HasColumnType("INTEGER");
 
@@ -335,8 +324,6 @@ namespace Lifecycle.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("PhaseId");
-
-                    b.HasIndex("ProjectId");
 
                     b.HasIndex("Status", "OrderInColumn");
 
@@ -473,10 +460,6 @@ namespace Lifecycle.Migrations
 
                     b.Property<string>("Repository")
                         .HasMaxLength(500)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Settings")
-                        .HasMaxLength(10000)
                         .HasColumnType("TEXT");
 
                     b.Property<int>("Status")
@@ -904,15 +887,7 @@ namespace Lifecycle.Migrations
                         .HasForeignKey("PhaseId")
                         .OnDelete(DeleteBehavior.SetNull);
 
-                    b.HasOne("Lifecycle.Data.Entities.Project", "Project")
-                        .WithMany()
-                        .HasForeignKey("ProjectId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
                     b.Navigation("Phase");
-
-                    b.Navigation("Project");
                 });
 
             modelBuilder.Entity("Lifecycle.Data.Entities.Milestone", b =>
@@ -940,7 +915,7 @@ namespace Lifecycle.Migrations
             modelBuilder.Entity("Lifecycle.Data.Entities.TaskAssignment", b =>
                 {
                     b.HasOne("Lifecycle.Data.Entities.LifecycleTask", "Task")
-                        .WithMany("Assignments")
+                        .WithMany()
                         .HasForeignKey("TaskId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
@@ -1055,8 +1030,6 @@ namespace Lifecycle.Migrations
 
             modelBuilder.Entity("Lifecycle.Data.Entities.LifecycleTask", b =>
                 {
-                    b.Navigation("Assignments");
-
                     b.Navigation("Attachments");
 
                     b.Navigation("Comments");

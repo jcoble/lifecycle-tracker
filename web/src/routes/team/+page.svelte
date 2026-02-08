@@ -15,29 +15,41 @@
 		Shield,
 		Search,
 		Code,
-		Eye
+		Eye,
+		Zap,
+		ChevronDown,
+		ChevronUp
 	} from '@lucide/svelte';
+	import { getCurrentProjectId } from '$lib/stores/project.svelte';
 
 	const queryClient = useQueryClient();
 
 	const teamQuery = createQuery(() => ({
-		queryKey: ['team', 1],
-		queryFn: () => teamApi.list(1),
+		queryKey: ['team', getCurrentProjectId()],
+		queryFn: () => teamApi.list(getCurrentProjectId()),
 	}));
 
 	const escalationsQuery = createQuery(() => ({
-		queryKey: ['escalations', 1],
-		queryFn: () => escalationsApi.list(1),
+		queryKey: ['escalations', getCurrentProjectId()],
+		queryFn: () => escalationsApi.list(getCurrentProjectId()),
+	}));
+
+	const templatesQuery = createQuery(() => ({
+		queryKey: ['role-templates'],
+		queryFn: () => teamApi.getRoleTemplates(),
 	}));
 
 	let showCreateForm = $state(false);
-	let newRole = $state('Developer');
+	let newRole = $state('Researcher');
 	let newName = $state('');
 	let newModel = $state('claude-sonnet-4-5');
-	let newPersistent = $state(false);
+	let newPersistent = $state(true);
+	let newTriggerStatuses = $state<string[]>(['Todo']);
+	let newPrompt = $state('');
+	let showAdvanced = $state(false);
 	let resolveText = $state('');
 
-	const roles = ['ProjectManager', 'Developer', 'QA', 'Reviewer', 'Researcher', 'DevOps'];
+	const allStatuses = ['Backlog', 'Todo', 'InProgress', 'Review', 'Done', 'Blocked'];
 	const models = ['claude-opus-4-6', 'claude-sonnet-4-5', 'claude-haiku-4-5'];
 
 	const roleIcons: Record<string, typeof User> = {
@@ -46,7 +58,10 @@
 		QA: Search,
 		Reviewer: Eye,
 		Researcher: Search,
+		TestPlanner: Code,
+		TestRunner: Play,
 		DevOps: Code,
+		Custom: Bot,
 	};
 
 	const statusColors: Record<string, string> = {
@@ -55,13 +70,62 @@
 		Suspended: 'text-warning bg-warning/10',
 	};
 
+	const triggerColors: Record<string, string> = {
+		Backlog: 'bg-zinc-700/50 text-zinc-300',
+		Todo: 'bg-blue-900/50 text-blue-300',
+		InProgress: 'bg-amber-900/50 text-amber-300',
+		Review: 'bg-purple-900/50 text-purple-300',
+		Done: 'bg-green-900/50 text-green-300',
+		Blocked: 'bg-red-900/50 text-red-300',
+	};
+
+	// Apply role template when role changes
+	function applyTemplate(role: string) {
+		const templates = templatesQuery.data;
+		if (!templates) return;
+		const tpl = templates.find(t => t.role === role);
+		if (tpl) {
+			newModel = tpl.modelName;
+			newPrompt = tpl.spawnPromptTemplate;
+			try {
+				newTriggerStatuses = JSON.parse(tpl.triggerStatuses);
+			} catch {
+				newTriggerStatuses = [];
+			}
+			// Auto-set persistent for non-custom roles
+			newPersistent = role !== 'Custom';
+		}
+	}
+
+	// Apply template on initial load
+	$effect(() => {
+		if (templatesQuery.data && !newPrompt) {
+			applyTemplate(newRole);
+		}
+	});
+
+	function toggleTrigger(status: string) {
+		if (newTriggerStatuses.includes(status)) {
+			newTriggerStatuses = newTriggerStatuses.filter(s => s !== status);
+		} else {
+			newTriggerStatuses = [...newTriggerStatuses, status];
+		}
+	}
+
+	function parseTriggers(triggerJson?: string): string[] {
+		if (!triggerJson) return [];
+		try { return JSON.parse(triggerJson); } catch { return []; }
+	}
+
 	const createMemberMutation = createMutation(() => ({
-		mutationFn: (data: { projectId: number; role: string; agentName: string; modelName: string; isPersistent: boolean }) =>
+		mutationFn: (data: { projectId: number; role: string; agentName: string; modelName: string; isPersistent: boolean; triggerStatuses?: string; spawnPromptTemplate?: string }) =>
 			teamApi.create(data),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['team'] });
 			showCreateForm = false;
 			newName = '';
+			newPrompt = '';
+			showAdvanced = false;
 		},
 	}));
 
@@ -89,16 +153,22 @@
 	function createMember() {
 		if (!newName.trim()) return;
 		createMemberMutation.mutate({
-			projectId: 1,
+			projectId: getCurrentProjectId(),
 			role: newRole,
 			agentName: newName.trim(),
 			modelName: newModel,
 			isPersistent: newPersistent,
+			triggerStatuses: JSON.stringify(newTriggerStatuses),
+			spawnPromptTemplate: newPrompt || undefined,
 		});
 	}
 
 	let pendingEscalations = $derived(
 		(escalationsQuery.data || []).filter((e: AgentEscalation) => e.status === 'Pending')
+	);
+
+	let roles = $derived(
+		templatesQuery.data ? templatesQuery.data.map(t => t.role) : ['Researcher', 'TestPlanner', 'TestRunner', 'Reviewer', 'Custom']
 	);
 </script>
 
@@ -171,13 +241,14 @@
 						type="text"
 						bind:value={newName}
 						class="w-full rounded-md border border-border bg-bg px-3 py-1.5 text-sm text-text-primary focus:border-accent focus:outline-none"
-						placeholder="e.g., dev-backend"
+						placeholder="e.g., researcher"
 					/>
 				</div>
 				<div>
-					<label class="mb-1 block text-xs text-text-tertiary">Role</label>
+					<label class="mb-1 block text-xs text-text-tertiary">Role Template</label>
 					<select
 						bind:value={newRole}
+						onchange={() => applyTemplate(newRole)}
 						class="w-full rounded-md border border-border bg-bg px-2 py-1.5 text-sm text-text-primary focus:border-accent focus:outline-none"
 					>
 						{#each roles as role}
@@ -185,6 +256,32 @@
 						{/each}
 					</select>
 				</div>
+			</div>
+
+			<!-- Trigger Statuses -->
+			<div class="mt-3">
+				<label class="mb-1.5 flex items-center gap-1 text-xs text-text-tertiary">
+					<Zap class="h-3 w-3" />
+					Trigger on task status
+				</label>
+				<div class="flex flex-wrap gap-1.5">
+					{#each allStatuses as status}
+						<button
+							onclick={() => toggleTrigger(status)}
+							class="rounded-md border px-2.5 py-1 text-xs transition-colors {
+								newTriggerStatuses.includes(status)
+									? `${triggerColors[status]} border-transparent font-medium`
+									: 'border-border text-text-tertiary hover:border-text-tertiary/50'
+							}"
+						>
+							{status}
+						</button>
+					{/each}
+				</div>
+			</div>
+
+			<!-- Model + Persistent row -->
+			<div class="mt-3 grid grid-cols-2 gap-3">
 				<div>
 					<label class="mb-1 block text-xs text-text-tertiary">Model</label>
 					<select
@@ -203,6 +300,30 @@
 					</label>
 				</div>
 			</div>
+
+			<!-- Advanced: System Prompt -->
+			<div class="mt-3">
+				<button
+					onclick={() => (showAdvanced = !showAdvanced)}
+					class="flex items-center gap-1 text-xs text-text-tertiary hover:text-text-secondary"
+				>
+					{#if showAdvanced}
+						<ChevronUp class="h-3 w-3" />
+					{:else}
+						<ChevronDown class="h-3 w-3" />
+					{/if}
+					System Prompt {newPrompt ? '(configured)' : ''}
+				</button>
+				{#if showAdvanced}
+					<textarea
+						bind:value={newPrompt}
+						rows="6"
+						class="mt-1.5 w-full rounded-md border border-border bg-bg px-3 py-2 text-xs text-text-primary font-mono leading-relaxed focus:border-accent focus:outline-none"
+						placeholder="System prompt for this agent when it's triggered..."
+					></textarea>
+				{/if}
+			</div>
+
 			<div class="mt-3 flex items-center gap-2">
 				<button
 					onclick={createMember}
@@ -229,6 +350,7 @@
 			<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
 				{#each teamQuery.data as member}
 					{@const RoleIcon = roleIcons[member.role] || Bot}
+					{@const triggers = parseTriggers(member.triggerStatuses)}
 					<div class="rounded-lg border border-border bg-surface p-4">
 						<!-- Header -->
 						<div class="mb-3 flex items-start justify-between">
@@ -245,6 +367,18 @@
 								{member.status}
 							</span>
 						</div>
+
+						<!-- Trigger Badges -->
+						{#if triggers.length > 0}
+							<div class="mb-2 flex flex-wrap gap-1">
+								{#each triggers as trigger}
+									<span class="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[10px] font-medium {triggerColors[trigger] || 'bg-zinc-700/50 text-zinc-300'}">
+										<Zap class="h-2.5 w-2.5" />
+										{trigger}
+									</span>
+								{/each}
+							</div>
+						{/if}
 
 						<!-- Info -->
 						<div class="mb-3 space-y-1 text-xs text-text-tertiary">

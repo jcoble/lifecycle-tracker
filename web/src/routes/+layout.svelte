@@ -19,6 +19,8 @@
 	import ShortcutsHelp from '$lib/components/shared/ShortcutsHelp.svelte';
 	import { agentActivityMap } from '$lib/stores/agentActivity';
 	import type { TeamMember } from '$lib/types';
+	import ProjectSelector from '$lib/components/shared/ProjectSelector.svelte';
+	import { getCurrentProjectId } from '$lib/stores/project.svelte';
 
 	let { children } = $props();
 
@@ -93,7 +95,8 @@
 	}
 
 	$effect(() => {
-		const eventSource = new EventSource('/api/events?projectId=1');
+		const pid = getCurrentProjectId();
+		const eventSource = new EventSource(`/api/events?projectId=${pid}`);
 
 		const invalidateAll = () => {
 			queryClient.invalidateQueries({ queryKey: ['tasks'] });
@@ -227,6 +230,11 @@
 				{#if !sidebarCollapsed}
 					<span class="font-semibold text-text-primary truncate">Lifecycle</span>
 				{/if}
+			</div>
+
+			<!-- Project Selector -->
+			<div class="border-b border-border py-2">
+				<ProjectSelector collapsed={sidebarCollapsed} />
 			</div>
 
 			<!-- Nav -->

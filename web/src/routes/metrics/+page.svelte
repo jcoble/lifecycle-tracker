@@ -13,15 +13,16 @@
 		Search,
 		Circle
 	} from '@lucide/svelte';
+	import { getCurrentProjectId } from '$lib/stores/project.svelte';
 
 	const dashboardQuery = createQuery(() => ({
-		queryKey: ['dashboard'],
-		queryFn: () => projects.dashboard(1),
+		queryKey: ['dashboard', getCurrentProjectId()],
+		queryFn: () => projects.dashboard(getCurrentProjectId()),
 	}));
 
 	const tasksQuery = createQuery(() => ({
-		queryKey: ['tasks'],
-		queryFn: () => tasksApi.list({ projectId: '1' }),
+		queryKey: ['tasks', getCurrentProjectId()],
+		queryFn: () => tasksApi.list({ projectId: String(getCurrentProjectId()) }),
 	}));
 
 	let dashboard = $derived(dashboardQuery.data as Dashboard | undefined);

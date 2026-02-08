@@ -4,22 +4,23 @@
 	import { tasks as tasksApi } from '$lib/api/endpoints/tasks';
 	import { phases as phasesApi } from '$lib/api/endpoints/phases';
 	import { labels as labelsApi } from '$lib/api/endpoints/labels';
+	import { getCurrentProjectId } from '$lib/stores/project.svelte';
 
 	const queryClient = useQueryClient();
 
 	const tasksQuery = createQuery(() => ({
-		queryKey: ['tasks'],
-		queryFn: () => tasksApi.list({ projectId: '1' }),
+		queryKey: ['tasks', getCurrentProjectId()],
+		queryFn: () => tasksApi.list({ projectId: String(getCurrentProjectId()) }),
 	}));
 
 	const phasesQuery = createQuery(() => ({
-		queryKey: ['phases', 'all'],
-		queryFn: () => phasesApi.list(1),
+		queryKey: ['phases', 'all', getCurrentProjectId()],
+		queryFn: () => phasesApi.list(getCurrentProjectId()),
 	}));
 
 	const labelsQuery = createQuery(() => ({
-		queryKey: ['labels'],
-		queryFn: () => labelsApi.list(1),
+		queryKey: ['labels', getCurrentProjectId()],
+		queryFn: () => labelsApi.list(getCurrentProjectId()),
 	}));
 
 	function handleTaskUpdated() {

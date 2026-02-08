@@ -30,7 +30,7 @@ public static class TaskEndpoints
             if (milestoneId.HasValue)
                 query = query.Where(t => t.Phase != null && t.Phase.MilestoneId == milestoneId.Value);
             if (projectId.HasValue)
-                query = query.Where(t => t.PhaseId == null || (t.Phase != null && t.Phase.Milestone.ProjectId == projectId.Value));
+                query = query.Where(t => t.ProjectId == projectId.Value);
             if (status.HasValue)
                 query = query.Where(t => t.Status == status.Value);
             if (priority.HasValue)
@@ -65,6 +65,7 @@ public static class TaskEndpoints
 
             var task = new LifecycleTask
             {
+                ProjectId = req.ProjectId ?? 1,
                 PhaseId = req.PhaseId,
                 Title = req.Title,
                 Description = req.Description,
@@ -238,7 +239,7 @@ public static class TaskEndpoints
         var activeAssignment = t.Assignments?.FirstOrDefault(a => a.Status != "Completed" && a.Status != "Abandoned");
         return new
         {
-            t.Id, t.PhaseId, t.Title, t.Description,
+            t.Id, t.ProjectId, t.PhaseId, t.Title, t.Description,
             Status = t.Status.ToString(),
             Priority = t.Priority.ToString(),
             Type = t.Type.ToString(),
@@ -258,7 +259,7 @@ public static class TaskEndpoints
 
     private static object MapToDetailDto(LifecycleTask t) => new
     {
-        t.Id, t.PhaseId, t.Title, t.Description,
+        t.Id, t.ProjectId, t.PhaseId, t.Title, t.Description,
         Status = t.Status.ToString(),
         Priority = t.Priority.ToString(),
         Type = t.Type.ToString(),
@@ -290,6 +291,7 @@ public static class TaskEndpoints
 public record CreateTaskRequest(
     string Title,
     string? Description = null,
+    int? ProjectId = null,
     int? PhaseId = null,
     TaskStatus? Status = null,
     TaskPriority? Priority = null,

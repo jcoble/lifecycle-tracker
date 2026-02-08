@@ -26,6 +26,7 @@ public static class AiEndpoints
 
                 var task = new LifecycleTask
                 {
+                    ProjectId = req.ProjectId ?? 1,
                     PhaseId = t.PhaseId,
                     Title = t.Title,
                     Description = t.Description,
@@ -95,6 +96,7 @@ public static class AiEndpoints
             {
                 var task = new LifecycleTask
                 {
+                    ProjectId = milestone.ProjectId,
                     PhaseId = phase.Id,
                     Title = t.Title,
                     Description = t.Description,

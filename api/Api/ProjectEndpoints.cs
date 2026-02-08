@@ -23,6 +23,7 @@ public static class ProjectEndpoints
             {
                 p.Id, p.Name, p.Description, p.Repository,
                 Status = p.Status.ToString(),
+                p.Settings,
                 MilestoneCount = p.Milestones.Count,
                 p.CreatedAt, p.UpdatedAt
             }));
@@ -65,6 +66,7 @@ public static class ProjectEndpoints
             {
                 project.Id, project.Name, project.Description, project.Repository,
                 Status = project.Status.ToString(),
+                project.Settings,
                 MilestoneCount = 0,
                 project.CreatedAt, project.UpdatedAt
             });
@@ -81,6 +83,7 @@ public static class ProjectEndpoints
             {
                 project.Id, project.Name, project.Description, project.Repository,
                 Status = project.Status.ToString(),
+                project.Settings,
                 MilestoneCount = project.Milestones.Count,
                 project.CreatedAt, project.UpdatedAt
             });
@@ -95,6 +98,7 @@ public static class ProjectEndpoints
             if (req.Description is not null) project.Description = req.Description;
             if (req.Repository is not null) project.Repository = req.Repository;
             if (req.Status.HasValue) project.Status = req.Status.Value;
+            if (req.Settings is not null) project.Settings = req.Settings;
 
             project.UpdatedAt = DateTime.UtcNow;
             await db.SaveChangesAsync();
@@ -103,6 +107,7 @@ public static class ProjectEndpoints
             {
                 project.Id, project.Name, project.Description, project.Repository,
                 Status = project.Status.ToString(),
+                project.Settings,
                 project.CreatedAt, project.UpdatedAt
             });
         });
@@ -209,4 +214,4 @@ public static class ProjectEndpoints
 }
 
 public record CreateProjectRequest(string Name, string? Description = null, string? Repository = null);
-public record UpdateProjectRequest(string? Name = null, string? Description = null, string? Repository = null, ProjectStatus? Status = null);
+public record UpdateProjectRequest(string? Name = null, string? Description = null, string? Repository = null, ProjectStatus? Status = null, string? Settings = null);

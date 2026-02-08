@@ -4,6 +4,7 @@
 	import FilterBar from './FilterBar.svelte';
 	import TaskDetail from '$lib/components/tasks/TaskDetail.svelte';
 	import { tasks as tasksApi } from '$lib/api/endpoints/tasks';
+	import { getCurrentProjectId } from '$lib/stores/project.svelte';
 
 	let {
 		tasks,
@@ -106,6 +107,7 @@
 			await tasksApi.create({
 				title,
 				status,
+				projectId: getCurrentProjectId(),
 				priority: 'P3',
 				type: 'Feature',
 				source: 'Manual',

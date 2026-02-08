@@ -3,6 +3,7 @@ using System;
 using Lifecycle.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Lifecycle.Migrations
 {
     [DbContext(typeof(LifecycleDbContext))]
-    partial class LifecycleDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260208000045_AddProjectIdToTask")]
+    partial class AddProjectIdToTask
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.1");
@@ -110,13 +113,6 @@ namespace Lifecycle.Migrations
                         .HasColumnType("INTEGER");
 
                     b.Property<DateTime?>("CompletedAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("CurrentActivity")
-                        .HasMaxLength(500)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime?>("LastHeartbeatAt")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("SessionId")
@@ -940,7 +936,7 @@ namespace Lifecycle.Migrations
             modelBuilder.Entity("Lifecycle.Data.Entities.TaskAssignment", b =>
                 {
                     b.HasOne("Lifecycle.Data.Entities.LifecycleTask", "Task")
-                        .WithMany("Assignments")
+                        .WithMany()
                         .HasForeignKey("TaskId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
@@ -1055,8 +1051,6 @@ namespace Lifecycle.Migrations
 
             modelBuilder.Entity("Lifecycle.Data.Entities.LifecycleTask", b =>
                 {
-                    b.Navigation("Assignments");
-
                     b.Navigation("Attachments");
 
                     b.Navigation("Comments");

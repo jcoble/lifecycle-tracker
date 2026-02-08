@@ -44,6 +44,7 @@ public static class TeamEndpoints
                 Status = "Idle",
                 ConfigJson = req.ConfigJson,
                 SpawnPromptTemplate = req.SpawnPromptTemplate,
+                TriggerStatuses = req.TriggerStatuses,
                 CreatedAt = DateTime.UtcNow
             };
 
@@ -78,6 +79,7 @@ public static class TeamEndpoints
             if (req.ModelName is not null) member.ModelName = req.ModelName;
             if (req.ConfigJson is not null) member.ConfigJson = req.ConfigJson;
             if (req.SpawnPromptTemplate is not null) member.SpawnPromptTemplate = req.SpawnPromptTemplate;
+            if (req.TriggerStatuses is not null) member.TriggerStatuses = req.TriggerStatuses;
 
             await db.SaveChangesAsync();
             return Results.Ok(MapMemberToDto(member));
@@ -322,6 +324,72 @@ public static class TeamEndpoints
             });
         });
 
+        // Get agents triggered by a task status change
+        group.MapGet("/triggered", async (int projectId, string status, LifecycleDbContext db) =>
+        {
+            var project = await db.Projects.FindAsync(projectId);
+            var settings = project is not null ? ParseSettings(project) : new Dictionary<string, string>();
+
+            var members = await db.TeamMembers
+                .Where(tm => tm.ProjectId == projectId && tm.TriggerStatuses != null)
+                .ToListAsync();
+
+            // Filter in memory since TriggerStatuses is a JSON array string
+            var triggered = members
+                .Where(tm => tm.TriggerStatuses != null && tm.TriggerStatuses.Contains($"\"{status}\""))
+                .Select(tm => new
+                {
+                    tm.Id, tm.AgentName, tm.Role, tm.ModelName,
+                    tm.SpawnPromptTemplate,
+                    ResolvedPrompt = ResolvePromptVariables(tm.SpawnPromptTemplate, settings),
+                    tm.TriggerStatuses,
+                    tm.IsPersistent, tm.Status
+                })
+                .ToList();
+
+            return Results.Ok(triggered);
+        });
+
+        // Role templates for quick setup
+        group.MapGet("/role-templates", () =>
+        {
+            var templates = new[]
+            {
+                new {
+                    Role = "Researcher",
+                    TriggerStatuses = "[\"Todo\"]",
+                    ModelName = "claude-sonnet-4-5",
+                    SpawnPromptTemplate = "You are a Researcher agent for the {{projectName}} project ({{language}}/{{framework}}).\n\nWhen a task enters Todo status, your job is to:\n1. Analyze the task requirements and scope\n2. Explore the relevant codebase at {{repositoryRoot}}\n3. Research any unfamiliar technologies or patterns needed\n4. Document your findings as a comment on the task\n5. Identify potential challenges or blockers\n\nProject dev URL: {{devUrl}}\nAPI URL: {{apiUrl}}\n\nBe thorough but concise. Focus on actionable insights that help the developer implement the task efficiently."
+                },
+                new {
+                    Role = "TestPlanner",
+                    TriggerStatuses = "[\"InProgress\"]",
+                    ModelName = "claude-sonnet-4-5",
+                    SpawnPromptTemplate = "You are a Test Planner agent for the {{projectName}} project ({{language}}/{{framework}}).\n\nWhen a task moves to InProgress, create a test plan covering:\n1. Unit tests — run with: {{unitTestCommand}}\n2. Integration tests — run with: {{integrationTestCommand}}\n3. Web/E2E tests — use {{webTestTool}} against {{devUrl}}\n4. Edge cases and error conditions\n5. Test data requirements\n\nTest depth: Use the task's requiredTestLevel if set, otherwise default to {{defaultTestLevel}}.\nAutonomy mode: {{testAutonomyLevel}}\n- Manual: create the plan only, human runs tests\n- SemiAuto: create plan + test files, human triggers execution\n- AutoCreate: create plan + test files + record in lifecycle\n- FullAuto: create plan + test files + execute + report results\n\nRecord the test plan using lifecycle tools. Prioritize: P1 = must have, P2 = should have."
+                },
+                new {
+                    Role = "TestRunner",
+                    TriggerStatuses = "[\"Review\"]",
+                    ModelName = "claude-sonnet-4-5",
+                    SpawnPromptTemplate = "You are a Test Runner agent for the {{projectName}} project.\n\nAutonomy mode: {{testAutonomyLevel}}\nWhen a task enters Review status:\n1. Get the test plan for this task\n2. Execute unit tests: {{unitTestCommand}}\n3. Execute integration tests: {{integrationTestCommand}}\n4. Execute web tests using {{webTestTool}} against {{devUrl}}\n5. Record results using lifecycle tools\n6. If tests fail: create an escalation with details\n7. If all tests pass: confirm the task is ready for completion\n\nProject root: {{repositoryRoot}}\nBe precise about failures — include error messages, expected vs actual results."
+                },
+                new {
+                    Role = "Reviewer",
+                    TriggerStatuses = "[\"Review\"]",
+                    ModelName = "claude-opus-4-6",
+                    SpawnPromptTemplate = "You are a Devil's Advocate Reviewer for the {{projectName}} project ({{language}}/{{framework}}).\n\nWhen a task enters Review:\n1. Review the implementation critically at {{repositoryRoot}}\n2. Challenge assumptions and look for:\n   - Edge cases not handled\n   - Security vulnerabilities (OWASP top 10)\n   - Performance concerns\n   - Missing error handling\n   - Code that could break in production\n3. If you find issues: create escalations describing each concern\n4. If the implementation is solid: confirm it passes review\n\nBe constructive but thorough. Better to catch issues now than in production."
+                },
+                new {
+                    Role = "Custom",
+                    TriggerStatuses = "[]",
+                    ModelName = "claude-sonnet-4-5",
+                    SpawnPromptTemplate = ""
+                }
+            };
+
+            return Results.Ok(templates);
+        });
+
         // Agent context (full project context for spawning)
         app.MapGet("/api/agents/context", async (int projectId, string? role, LifecycleDbContext db) =>
         {
@@ -343,13 +411,39 @@ public static class TeamEndpoints
                 .Select(e => new { e.Id, e.Description, e.TaskId })
                 .ToListAsync();
 
+            // Parse settings for variable resolution
+            var settingsDict = ParseSettings(project);
+
             return Results.Ok(new
             {
-                Project = new { project.Id, project.Name, project.Description },
+                Project = new { project.Id, project.Name, project.Description, project.Settings },
+                ProjectSettings = settingsDict,
                 Team = team,
                 ActiveTasks = activeTasks,
                 PendingEscalations = pendingEscalations
             });
+        });
+
+        // Get/update project settings (convenience endpoint)
+        app.MapGet("/api/projects/{id:int}/settings", async (int id, LifecycleDbContext db) =>
+        {
+            var project = await db.Projects.FindAsync(id);
+            if (project is null) return Results.NotFound();
+
+            var settings = ParseSettings(project);
+            return Results.Ok(new { project.Id, Settings = settings });
+        });
+
+        app.MapPut("/api/projects/{id:int}/settings", async (int id, ProjectSettingsRequest req, LifecycleDbContext db) =>
+        {
+            var project = await db.Projects.FindAsync(id);
+            if (project is null) return Results.NotFound();
+
+            project.Settings = JsonSerializer.Serialize(req.Settings);
+            project.UpdatedAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+
+            return Results.Ok(new { project.Id, Settings = req.Settings });
         });
 
         return app;
@@ -396,7 +490,7 @@ public static class TeamEndpoints
         return new
         {
             tm.Id, tm.ProjectId, tm.Role, tm.AgentName, tm.ModelName,
-            tm.IsPersistent, tm.Status, tm.ConfigJson,
+            tm.IsPersistent, tm.Status, tm.ConfigJson, tm.TriggerStatuses,
             tm.CreatedAt, tm.LastActiveAt,
             CurrentActivity = latestSession?.CurrentActivity,
             CurrentSession = latestSession is null ? null : new
@@ -415,7 +509,7 @@ public static class TeamEndpoints
     {
         tm.Id, tm.ProjectId, tm.Role, tm.AgentName, tm.ModelName,
         tm.IsPersistent, tm.Status, tm.ConfigJson, tm.SpawnPromptTemplate,
-        tm.CreatedAt, tm.LastActiveAt,
+        tm.TriggerStatuses, tm.CreatedAt, tm.LastActiveAt,
         Sessions = tm.Sessions.Select(s => new
         {
             s.Id, s.SessionId, s.Status, s.SpawnedAt, s.CompletedAt, s.TokensUsed
@@ -435,13 +529,15 @@ public record CreateTeamMemberRequest(
     string ModelName,
     bool IsPersistent = false,
     string? ConfigJson = null,
-    string? SpawnPromptTemplate = null);
+    string? SpawnPromptTemplate = null,
+    string? TriggerStatuses = null);
 
 public record UpdateTeamMemberRequest(
     string? Status = null,
     string? ModelName = null,
     string? ConfigJson = null,
-    string? SpawnPromptTemplate = null);
+    string? SpawnPromptTemplate = null,
+    string? TriggerStatuses = null);
 
 public record SpawnSessionRequest(string? SessionId = null);
 public record ShutdownRequest(int? TokensUsed = null);
@@ -458,3 +554,5 @@ public record CreateEscalationRequest(
 public record ResolveEscalationRequest(
     string? Status = null,
     string? Resolution = null);
+
+public record ProjectSettingsRequest(Dictionary<string, string> Settings);

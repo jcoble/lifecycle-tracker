@@ -16,7 +16,11 @@ export const team = {
 		isPersistent?: boolean;
 		configJson?: string;
 		spawnPromptTemplate?: string;
+		triggerStatuses?: string;
 	}) => api.post<TeamMember>('/teams', data),
+
+	getRoleTemplates: () =>
+		api.get<Array<{ role: string; triggerStatuses: string; modelName: string; spawnPromptTemplate: string }>>('/teams/role-templates'),
 
 	update: (id: number, data: Partial<TeamMember>) =>
 		api.patch<TeamMember>(`/teams/${id}`, data),

@@ -2,19 +2,21 @@
 	import { createQuery, createMutation, useQueryClient } from '@tanstack/svelte-query';
 	import { labels as labelsApi } from '$lib/api/endpoints/labels';
 	import { projects as projectsApi } from '$lib/api/endpoints/projects';
-	import type { Label } from '$lib/types';
-	import { Plus, Trash2, Pencil, Check, XIcon } from '@lucide/svelte';
+	import type { Label, ProjectSettings } from '$lib/types';
+	import { Plus, Trash2, Pencil, Check, XIcon, Settings, Wrench } from '@lucide/svelte';
+	import { api } from '$lib/api/client';
+	import { getCurrentProjectId } from '$lib/stores/project.svelte';
 
 	const queryClient = useQueryClient();
 
 	const projectQuery = createQuery(() => ({
-		queryKey: ['project', 1],
-		queryFn: () => projectsApi.get(1),
+		queryKey: ['project', getCurrentProjectId()],
+		queryFn: () => projectsApi.get(getCurrentProjectId()),
 	}));
 
 	const labelsQuery = createQuery(() => ({
-		queryKey: ['labels'],
-		queryFn: () => labelsApi.list(1),
+		queryKey: ['labels', getCurrentProjectId()],
+		queryFn: () => labelsApi.list(getCurrentProjectId()),
 	}));
 
 	let editing = $state(false);
@@ -24,6 +26,78 @@
 
 	let newLabelName = $state('');
 	let newLabelColor = $state('#3b82f6');
+
+	// Project Settings state
+	let editingSettings = $state(false);
+	let settingsFields = $state<ProjectSettings>({});
+
+	const settingsConfig = [
+		{ key: 'language', label: 'Language', placeholder: 'e.g., C#, TypeScript, Python', icon: 'code' },
+		{ key: 'framework', label: 'Framework', placeholder: 'e.g., .NET 10, SvelteKit, Next.js', icon: 'box' },
+		{ key: 'repositoryRoot', label: 'Repository Root', placeholder: 'e.g., /Users/me/project', icon: 'folder', mono: true },
+		{ key: 'devUrl', label: 'Dev URL', placeholder: 'e.g., https://localhost:5173', icon: 'globe', mono: true },
+		{ key: 'apiUrl', label: 'API URL', placeholder: 'e.g., https://localhost:5001', icon: 'globe', mono: true },
+		{ key: 'unitTestCommand', label: 'Unit Test Command', placeholder: 'e.g., dotnet test --filter Category=Unit', icon: 'terminal', mono: true },
+		{ key: 'integrationTestCommand', label: 'Integration Test Command', placeholder: 'e.g., dotnet test --filter Category=Integration', icon: 'terminal', mono: true },
+		{ key: 'webTestTool', label: 'Web Test Tool', placeholder: 'e.g., agent-browser, playwright', icon: 'monitor' },
+		{ key: 'defaultTestLevel', label: 'Default Test Level', placeholder: 'Smoke | Functional | Comprehensive | FullE2E', icon: 'shield' },
+		{ key: 'testAutonomyLevel', label: 'Test Autonomy', placeholder: 'Manual | SemiAuto | AutoCreate | FullAuto', icon: 'bot' },
+	] as const;
+
+	function parseSettings(raw?: string): ProjectSettings {
+		if (!raw) return {};
+		try { return JSON.parse(raw); } catch { return {}; }
+	}
+
+	function startEditingSettings() {
+		settingsFields = parseSettings(projectQuery.data?.settings);
+		editingSettings = true;
+	}
+
+	function cancelEditingSettings() {
+		editingSettings = false;
+	}
+
+	const updateSettingsMutation = createMutation(() => ({
+		mutationFn: (settings: ProjectSettings) =>
+			api.put<{ id: number; settings: ProjectSettings }>(`/projects/${getCurrentProjectId()}/settings`, { settings }),
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: ['project', getCurrentProjectId()] });
+			editingSettings = false;
+		},
+	}));
+
+	function saveSettings() {
+		// Strip empty values
+		const cleaned: Record<string, string> = {};
+		for (const [k, v] of Object.entries(settingsFields)) {
+			if (v && v.trim()) cleaned[k] = v.trim();
+		}
+		updateSettingsMutation.mutate(cleaned);
+	}
+
+	// Custom variable support
+	let newVarKey = $state('');
+	let newVarValue = $state('');
+
+	function addCustomVar() {
+		if (!newVarKey.trim() || !newVarValue.trim()) return;
+		settingsFields = { ...settingsFields, [newVarKey.trim()]: newVarValue.trim() };
+		newVarKey = '';
+		newVarValue = '';
+	}
+
+	function removeCustomVar(key: string) {
+		const { [key]: _, ...rest } = settingsFields;
+		settingsFields = rest;
+	}
+
+	let currentSettings = $derived(parseSettings(projectQuery.data?.settings));
+
+	const knownKeys = new Set(settingsConfig.map(c => c.key));
+	function getCustomVars(s: ProjectSettings): [string, string][] {
+		return Object.entries(s).filter(([k, v]) => !knownKeys.has(k) && v) as [string, string][];
+	}
 
 	function startEditing() {
 		if (!projectQuery.data) return;
@@ -39,9 +113,9 @@
 
 	const updateProjectMutation = createMutation(() => ({
 		mutationFn: (data: { name: string; description?: string; repository?: string }) =>
-			projectsApi.update(1, data),
+			projectsApi.update(getCurrentProjectId(), data),
 		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ['project', 1] });
+			queryClient.invalidateQueries({ queryKey: ['project', getCurrentProjectId()] });
 			queryClient.invalidateQueries({ queryKey: ['dashboard'] });
 			editing = false;
 		},
@@ -66,14 +140,14 @@
 	}));
 
 	const deleteLabelMutation = createMutation(() => ({
-		mutationFn: (id: number) => labelsApi.delete(id, 1),
+		mutationFn: (id: number) => labelsApi.delete(id, getCurrentProjectId()),
 		onSuccess: () => queryClient.invalidateQueries({ queryKey: ['labels'] }),
 	}));
 
 	function addLabel() {
 		if (!newLabelName.trim()) return;
 		createLabelMutation.mutate({
-			projectId: 1,
+			projectId: getCurrentProjectId(),
 			name: newLabelName.trim(),
 			color: newLabelColor,
 		});
@@ -174,6 +248,140 @@
 							</div>
 						{/if}
 					</div>
+				{/if}
+			</div>
+		{/if}
+
+		<!-- Project Settings (Agent Variables) -->
+		{#if projectQuery.data}
+			<div class="rounded-lg border border-border bg-surface p-5">
+				<div class="mb-4 flex items-center justify-between">
+					<div class="flex items-center gap-2">
+						<Wrench class="h-4 w-4 text-text-tertiary" />
+						<h2 class="text-sm font-semibold text-text-primary">Project Settings</h2>
+					</div>
+					{#if !editingSettings}
+						<button
+							onclick={startEditingSettings}
+							class="rounded p-1 text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-primary"
+							title="Edit settings"
+						>
+							<Pencil class="h-3.5 w-3.5" />
+						</button>
+					{/if}
+				</div>
+
+				<p class="mb-4 text-xs text-text-tertiary">
+					Configure your project's tech stack. These values are used as <code class="rounded bg-bg px-1 py-0.5">{"{{variables}}"}</code> in team member prompt templates.
+				</p>
+
+				{#if editingSettings}
+					<div class="space-y-3">
+						{#each settingsConfig as field}
+							<div>
+								<label for="settings-{field.key}" class="mb-1 block text-xs text-text-tertiary">
+									{field.label}
+									<code class="ml-1 rounded bg-bg px-1 py-0.5 text-[10px] text-accent">{`{{${field.key}}}`}</code>
+								</label>
+								<input
+									id="settings-{field.key}"
+									type="text"
+									value={settingsFields[field.key] || ''}
+									oninput={(e) => { settingsFields = { ...settingsFields, [field.key]: e.currentTarget.value }; }}
+									placeholder={field.placeholder}
+									class="w-full rounded-md border border-border bg-bg px-3 py-1.5 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none {field.mono ? 'font-mono' : ''}"
+								/>
+							</div>
+						{/each}
+
+						<!-- Custom variables -->
+						{#if getCustomVars(settingsFields).length > 0}
+							<div class="border-t border-border pt-3">
+								<p class="mb-2 text-xs font-medium text-text-tertiary">Custom Variables</p>
+								{#each getCustomVars(settingsFields) as [key, value]}
+									<div class="mb-2 flex items-center gap-2">
+										<code class="min-w-[100px] rounded bg-bg px-2 py-1 text-xs text-accent">{`{{${key}}}`}</code>
+										<span class="flex-1 truncate text-sm text-text-primary">{value}</span>
+										<button
+											onclick={() => removeCustomVar(key)}
+											class="rounded p-1 text-text-tertiary hover:bg-danger/10 hover:text-danger"
+										>
+											<Trash2 class="h-3 w-3" />
+										</button>
+									</div>
+								{/each}
+							</div>
+						{/if}
+
+						<div class="border-t border-border pt-3">
+							<p class="mb-2 text-xs font-medium text-text-tertiary">Add Custom Variable</p>
+							<div class="flex items-center gap-2">
+								<input
+									type="text"
+									bind:value={newVarKey}
+									placeholder="variableName"
+									class="w-32 rounded-md border border-border bg-bg px-2 py-1.5 text-xs font-mono text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+								/>
+								<input
+									type="text"
+									bind:value={newVarValue}
+									placeholder="value"
+									onkeydown={(e) => { if (e.key === 'Enter') addCustomVar(); }}
+									class="flex-1 rounded-md border border-border bg-bg px-2 py-1.5 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+								/>
+								<button
+									onclick={addCustomVar}
+									disabled={!newVarKey.trim() || !newVarValue.trim()}
+									class="rounded-md bg-surface-hover px-2 py-1.5 text-xs text-text-secondary hover:text-text-primary disabled:opacity-50"
+								>
+									<Plus class="h-3.5 w-3.5" />
+								</button>
+							</div>
+						</div>
+
+						<div class="flex items-center gap-2 pt-1">
+							<button
+								onclick={saveSettings}
+								disabled={updateSettingsMutation.isPending}
+								class="flex items-center gap-1 rounded-md bg-accent px-3 py-1.5 text-sm text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
+							>
+								<Check class="h-3.5 w-3.5" />
+								Save Settings
+							</button>
+							<button
+								onclick={cancelEditingSettings}
+								class="flex items-center gap-1 rounded-md border border-border px-3 py-1.5 text-sm text-text-secondary transition-colors hover:bg-surface-hover"
+							>
+								<XIcon class="h-3.5 w-3.5" />
+								Cancel
+							</button>
+						</div>
+					</div>
+				{:else}
+					{#if Object.values(currentSettings).some(v => v)}
+						<div class="space-y-2">
+							{#each settingsConfig as field}
+								{#if currentSettings[field.key]}
+									<div class="flex items-start gap-3 rounded-md border border-border bg-bg px-3 py-2">
+										<div class="min-w-[140px]">
+											<p class="text-xs text-text-tertiary">{field.label}</p>
+										</div>
+										<p class="text-sm {field.mono ? 'font-mono' : ''} text-text-primary">{currentSettings[field.key]}</p>
+									</div>
+								{/if}
+							{/each}
+							{#each getCustomVars(currentSettings) as [key, value]}
+								<div class="flex items-start gap-3 rounded-md border border-border bg-bg px-3 py-2">
+									<div class="min-w-[140px]">
+										<code class="rounded bg-surface px-1.5 py-0.5 text-xs text-accent">{`{{${key}}}`}</code>
+									</div>
+									<p class="text-sm text-text-primary">{value}</p>
+								</div>
+							{/each}
+						</div>
+					{:else}
+						<p class="text-sm text-text-tertiary">No settings configured yet. Click edit to set up your project's tech stack.</p>
+					{/if}
 				{/if}
 			</div>
 		{/if}
