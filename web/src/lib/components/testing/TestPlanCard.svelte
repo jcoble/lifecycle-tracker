@@ -137,14 +137,35 @@
 						</span>
 					</button>
 
-					{#if expandedTests.has(test.id) && test.steps && test.steps.length > 0}
-						<div class="border-t border-border px-2 py-1 space-y-0.5">
-							{#each test.steps as step, i}
-								<div class="flex items-center gap-1.5 text-[10px] text-text-tertiary">
-									<span class="text-text-tertiary w-3 text-right">{i + 1}.</span>
-									<span class="truncate">{step.description}</span>
+					{#if expandedTests.has(test.id)}
+						<div class="border-t border-border px-2 py-1.5 space-y-1">
+							{#if test.testFile || test.framework}
+								<div class="flex items-center gap-2 text-[10px] text-text-tertiary">
+									{#if test.testFile}
+										<span class="font-mono truncate">{test.testFile}</span>
+									{/if}
+									{#if test.framework}
+										<span class="rounded-full bg-surface-hover px-1.5 py-0.5 shrink-0">{test.framework}</span>
+									{/if}
 								</div>
-							{/each}
+							{/if}
+							{#if test.lastRunAt}
+								<div class="flex items-center gap-2 text-[10px] text-text-tertiary">
+									<span>Runs: {test.passedRuns} passed, {test.failedRuns} failed of {test.totalRuns}</span>
+								</div>
+							{/if}
+							{#if test.steps && test.steps.length > 0}
+								<div class="space-y-0.5">
+									{#each test.steps as step, i}
+										<div class="flex items-center gap-1.5 text-[10px] text-text-tertiary">
+											<span class="text-text-tertiary w-3 text-right">{i + 1}.</span>
+											<span class="truncate">{step.description}</span>
+										</div>
+									{/each}
+								</div>
+							{:else}
+								<p class="text-[10px] text-text-tertiary italic">No steps defined</p>
+							{/if}
 						</div>
 					{/if}
 				</div>
