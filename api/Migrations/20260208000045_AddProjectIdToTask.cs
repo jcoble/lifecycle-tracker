@@ -30,12 +30,7 @@ namespace Lifecycle.Migrations
                 WHERE Tasks.PhaseId IS NOT NULL
             ");
 
-            migrationBuilder.AddColumn<string>(
-                name: "PullRequestUrl",
-                table: "Tasks",
-                type: "TEXT",
-                maxLength: 500,
-                nullable: true);
+            // PullRequestUrl already added by AddAgentActivityTracking migration
 
             migrationBuilder.CreateIndex(
                 name: "IX_Tasks_ProjectId",
@@ -64,10 +59,6 @@ namespace Lifecycle.Migrations
 
             migrationBuilder.DropColumn(
                 name: "ProjectId",
-                table: "Tasks");
-
-            migrationBuilder.DropColumn(
-                name: "PullRequestUrl",
                 table: "Tasks");
         }
     }

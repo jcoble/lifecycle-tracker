@@ -11,26 +11,7 @@ namespace Lifecycle.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AddColumn<string>(
-                name: "TriggerStatuses",
-                table: "TeamMembers",
-                type: "TEXT",
-                maxLength: 500,
-                nullable: true);
-
-            migrationBuilder.AddColumn<string>(
-                name: "PullRequestUrl",
-                table: "Tasks",
-                type: "TEXT",
-                maxLength: 500,
-                nullable: true);
-
-            migrationBuilder.AddColumn<string>(
-                name: "Settings",
-                table: "Projects",
-                type: "TEXT",
-                maxLength: 10000,
-                nullable: true);
+            // TriggerStatuses, Settings, PullRequestUrl already added by earlier migrations
 
             migrationBuilder.AddColumn<string>(
                 name: "CurrentActivity",
