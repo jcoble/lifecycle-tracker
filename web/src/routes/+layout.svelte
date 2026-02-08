@@ -17,6 +17,8 @@
 	} from '@lucide/svelte';
 	import { matchShortcut } from '$lib/shortcuts';
 	import ShortcutsHelp from '$lib/components/shared/ShortcutsHelp.svelte';
+	import { agentActivityMap } from '$lib/stores/agentActivity';
+	import type { TeamMember } from '$lib/types';
 
 	let { children } = $props();
 
@@ -64,6 +66,32 @@
 		if (isMobile) sidebarCollapsed = true;
 	}
 
+	// Bootstrap agent activity store from current team state
+	async function bootstrapAgentActivity() {
+		try {
+			const res = await fetch('/api/teams?projectId=1');
+			if (!res.ok) return;
+			const members: TeamMember[] = await res.json();
+			const map = new Map<number, import('$lib/stores/agentActivity').AgentActivityEntry>();
+			for (const m of members) {
+				if (m.status === 'Active' && m.currentSession) {
+					map.set(m.id, {
+						teamMemberId: m.id,
+						agentName: m.agentName,
+						role: m.role,
+						status: 'active',
+						currentActivity: (m as any).currentActivity || null,
+						taskId: m.currentTask?.taskId || null,
+						taskTitle: null,
+						sessionSpawnedAt: m.currentSession.spawnedAt,
+						lastHeartbeat: m.lastActiveAt || m.currentSession.spawnedAt,
+					});
+				}
+			}
+			agentActivityMap.set(map);
+		} catch { /* ignore bootstrap errors */ }
+	}
+
 	$effect(() => {
 		const eventSource = new EventSource('/api/events?projectId=1');
 
@@ -90,6 +118,72 @@
 			queryClient.invalidateQueries({ queryKey: ['activity'] });
 			queryClient.invalidateQueries({ queryKey: ['dashboard'] });
 		});
+
+		// Agent activity SSE events
+		eventSource.addEventListener('agent:spawned', (e) => {
+			const data = JSON.parse(e.data);
+			agentActivityMap.update((map) => {
+				map.set(data.id || data.teamMemberId, {
+					teamMemberId: data.id || data.teamMemberId,
+					agentName: data.agentName,
+					role: data.role,
+					status: 'active',
+					currentActivity: null,
+					taskId: null,
+					taskTitle: null,
+					sessionSpawnedAt: new Date().toISOString(),
+					lastHeartbeat: new Date().toISOString(),
+				});
+				return new Map(map);
+			});
+			queryClient.invalidateQueries({ queryKey: ['team'] });
+		});
+
+		eventSource.addEventListener('agent:shutdown', (e) => {
+			const data = JSON.parse(e.data);
+			agentActivityMap.update((map) => {
+				map.delete(data.id || data.teamMemberId);
+				return new Map(map);
+			});
+			queryClient.invalidateQueries({ queryKey: ['team'] });
+		});
+
+		eventSource.addEventListener('agent:activity', (e) => {
+			const data = JSON.parse(e.data);
+			agentActivityMap.update((map) => {
+				const entry = map.get(data.teamMemberId);
+				if (entry) {
+					entry.currentActivity = data.activity;
+					entry.lastHeartbeat = data.timestamp || new Date().toISOString();
+					entry.status = 'active';
+				}
+				return new Map(map);
+			});
+		});
+
+		eventSource.addEventListener('task:assigned', (e) => {
+			const data = JSON.parse(e.data);
+			if (data.teamMemberId) {
+				agentActivityMap.update((map) => {
+					const entry = map.get(data.teamMemberId);
+					if (entry) {
+						entry.taskId = data.taskId;
+						entry.taskTitle = data.taskTitle || null;
+						entry.lastHeartbeat = new Date().toISOString();
+					}
+					return new Map(map);
+				});
+			}
+			invalidateAll();
+		});
+
+		// Re-bootstrap on reconnect (handles missed events)
+		eventSource.addEventListener('connected', () => {
+			bootstrapAgentActivity();
+		});
+
+		// Initial bootstrap
+		bootstrapAgentActivity();
 
 		return () => eventSource.close();
 	});

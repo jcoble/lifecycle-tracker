@@ -21,6 +21,8 @@ public static class TaskEndpoints
             var query = db.Tasks
                 .Include(t => t.TaskLabels).ThenInclude(tl => tl.Label)
                 .Include(t => t.Phase)
+                .Include(t => t.Assignments.Where(a => a.Status != "Completed" && a.Status != "Abandoned"))
+                    .ThenInclude(a => a.TeamMember)
                 .AsQueryable();
 
             if (phaseId.HasValue)
@@ -231,19 +233,28 @@ public static class TaskEndpoints
         return app;
     }
 
-    private static object MapToListDto(LifecycleTask t) => new
+    private static object MapToListDto(LifecycleTask t)
     {
-        t.Id, t.PhaseId, t.Title, t.Description,
-        Status = t.Status.ToString(),
-        Priority = t.Priority.ToString(),
-        Type = t.Type.ToString(),
-        Source = t.Source.ToString(),
-        t.OrderInColumn, t.DueDate, t.StartedAt, t.CompletedAt,
-        t.GitCommitSha, t.GitBranch, t.PullRequestUrl, t.ConversationRef,
-        RequiredTestLevel = t.RequiredTestLevel?.ToString(),
-        t.CreatedAt, t.UpdatedAt,
-        Labels = t.TaskLabels.Select(tl => new { tl.Label.Id, tl.Label.Name, tl.Label.Color })
-    };
+        var activeAssignment = t.Assignments?.FirstOrDefault(a => a.Status != "Completed" && a.Status != "Abandoned");
+        return new
+        {
+            t.Id, t.PhaseId, t.Title, t.Description,
+            Status = t.Status.ToString(),
+            Priority = t.Priority.ToString(),
+            Type = t.Type.ToString(),
+            Source = t.Source.ToString(),
+            t.OrderInColumn, t.DueDate, t.StartedAt, t.CompletedAt,
+            t.GitCommitSha, t.GitBranch, t.PullRequestUrl, t.ConversationRef,
+            RequiredTestLevel = t.RequiredTestLevel?.ToString(),
+            t.CreatedAt, t.UpdatedAt,
+            Labels = t.TaskLabels.Select(tl => new { tl.Label.Id, tl.Label.Name, tl.Label.Color }),
+            AssignedTo = activeAssignment is null ? null : new
+            {
+                TeamMemberId = activeAssignment.TeamMemberId,
+                AgentName = activeAssignment.TeamMember?.AgentName
+            }
+        };
+    }
 
     private static object MapToDetailDto(LifecycleTask t) => new
     {

@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.RegularExpressions;
 using Lifecycle.Data;
 using Lifecycle.Data.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -133,6 +135,7 @@ public static class TeamEndpoints
                 session.Status = "Completed";
                 session.CompletedAt = DateTime.UtcNow;
                 session.TokensUsed = req.TokensUsed;
+                session.CurrentActivity = null;
             }
 
             member.Status = "Idle";
@@ -141,6 +144,44 @@ public static class TeamEndpoints
             await sse.BroadcastAsync("agent:shutdown", new { member.Id, member.AgentName });
 
             return Results.Ok(new { Success = true });
+        });
+
+        // Agent heartbeat / activity report
+        group.MapPost("/{id:int}/heartbeat", async (int id, HeartbeatRequest req, LifecycleDbContext db, SseService sse) =>
+        {
+            var member = await db.TeamMembers
+                .Include(tm => tm.Sessions.Where(s => s.Status == "Active"))
+                .FirstOrDefaultAsync(tm => tm.Id == id);
+
+            if (member is null) return Results.NotFound();
+
+            var activeSession = member.Sessions.FirstOrDefault();
+            if (activeSession is null) return Results.BadRequest("No active session");
+
+            var activityChanged = req.Activity is not null && req.Activity != activeSession.CurrentActivity;
+
+            activeSession.LastHeartbeatAt = DateTime.UtcNow;
+            if (req.Activity is not null)
+                activeSession.CurrentActivity = req.Activity;
+            if (req.TokensUsed.HasValue)
+                activeSession.TokensUsed = req.TokensUsed;
+
+            member.LastActiveAt = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+
+            if (activityChanged)
+            {
+                await sse.BroadcastAsync("agent:activity", new
+                {
+                    TeamMemberId = member.Id,
+                    member.AgentName,
+                    member.Role,
+                    Activity = req.Activity,
+                    Timestamp = DateTime.UtcNow
+                });
+            }
+
+            return Results.Ok(new { Success = true, activeSession.SessionId });
         });
 
         // Assign task to team member
@@ -167,7 +208,19 @@ public static class TeamEndpoints
             db.TaskAssignments.Add(assignment);
             await db.SaveChangesAsync();
 
-            await sse.BroadcastAsync("task:assigned", new { assignment.Id, assignment.TaskId, assignment.TeamMemberId });
+            // Look up agent name for enhanced SSE event
+            string? agentName = null;
+            if (req.TeamMemberId.HasValue)
+            {
+                var assignedMember = await db.TeamMembers.FindAsync(req.TeamMemberId.Value);
+                agentName = assignedMember?.AgentName;
+            }
+
+            await sse.BroadcastAsync("task:assigned", new
+            {
+                assignment.Id, assignment.TaskId, assignment.TeamMemberId,
+                AgentName = agentName, TaskTitle = task.Title
+            });
 
             return Results.Created($"/api/tasks/{taskId}/assignments/{assignment.Id}", new
             {
@@ -302,6 +355,40 @@ public static class TeamEndpoints
         return app;
     }
 
+    internal static string ResolvePromptVariables(string? template, Dictionary<string, string> settings)
+    {
+        if (string.IsNullOrEmpty(template)) return template ?? "";
+        return Regex.Replace(template, @"\{\{(\w+)\}\}", match =>
+        {
+            var key = match.Groups[1].Value;
+            return settings.TryGetValue(key, out var val) ? val : match.Value;
+        });
+    }
+
+    internal static Dictionary<string, string> ParseSettings(Project project)
+    {
+        var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["projectName"] = project.Name
+        };
+
+        if (!string.IsNullOrEmpty(project.Settings))
+        {
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<Dictionary<string, string>>(project.Settings);
+                if (parsed is not null)
+                {
+                    foreach (var kv in parsed)
+                        dict[kv.Key] = kv.Value;
+                }
+            }
+            catch { /* ignore parse errors */ }
+        }
+
+        return dict;
+    }
+
     private static object MapMemberToDto(TeamMember tm)
     {
         var latestSession = tm.Sessions?.OrderByDescending(s => s.SpawnedAt).FirstOrDefault();
@@ -311,9 +398,11 @@ public static class TeamEndpoints
             tm.Id, tm.ProjectId, tm.Role, tm.AgentName, tm.ModelName,
             tm.IsPersistent, tm.Status, tm.ConfigJson,
             tm.CreatedAt, tm.LastActiveAt,
+            CurrentActivity = latestSession?.CurrentActivity,
             CurrentSession = latestSession is null ? null : new
             {
-                latestSession.Id, latestSession.SessionId, latestSession.Status, latestSession.SpawnedAt
+                latestSession.Id, latestSession.SessionId, latestSession.Status,
+                latestSession.SpawnedAt, latestSession.LastHeartbeatAt
             },
             CurrentTask = activeAssignment is null ? null : new
             {
@@ -356,6 +445,7 @@ public record UpdateTeamMemberRequest(
 
 public record SpawnSessionRequest(string? SessionId = null);
 public record ShutdownRequest(int? TokensUsed = null);
+public record HeartbeatRequest(string? Activity = null, int? TokensUsed = null);
 
 public record AssignTaskRequest(int? TeamMemberId = null, string? AssignedBy = null);
 public record ClaimTaskRequest(string AgentName);
