@@ -105,6 +105,7 @@
 
 		eventSource.addEventListener('task:created', invalidateAll);
 		eventSource.addEventListener('task:updated', invalidateAll);
+		eventSource.addEventListener('task:moved', invalidateAll);
 		eventSource.addEventListener('task:deleted', invalidateAll);
 		eventSource.addEventListener('phase:updated', () => {
 			queryClient.invalidateQueries({ queryKey: ['phases'] });

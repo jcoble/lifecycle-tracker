@@ -195,91 +195,6 @@ public static class AiEndpoints
             });
         });
 
-        // Record test (creates Test entity under auto-created plan)
-        group.MapPost("/tests/record", async (AiRecordTestRequest req, LifecycleDbContext db, SseService sse) =>
-        {
-            var task = await db.Tasks
-                .Include(t => t.TestPlans)
-                    .ThenInclude(tp => tp.Tests)
-                .FirstOrDefaultAsync(t => t.Id == req.TaskId);
-            if (task is null) return Results.NotFound();
-
-            // Find or create an auto-generated plan for this task
-            var plan = task.TestPlans.FirstOrDefault(tp => tp.Source == TestPlanSource.AI_Generated);
-            if (plan is null)
-            {
-                plan = new TestPlan
-                {
-                    TaskId = req.TaskId,
-                    Name = "Auto-generated Test Plan",
-                    RequiredLevel = task.RequiredTestLevel ?? TestLevel.Smoke,
-                    Status = TestPlanStatus.Draft,
-                    Source = TestPlanSource.AI_Generated,
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
-                };
-                db.TestPlans.Add(plan);
-                await db.SaveChangesAsync();
-            }
-
-            var maxOrder = plan.Tests.Any() ? plan.Tests.Max(t => t.OrderIndex) : -1;
-            var test = new Test
-            {
-                TestPlanId = plan.Id,
-                OrderIndex = maxOrder + 1,
-                Name = req.TestName ?? req.TestType.ToString(),
-                Type = req.TestType,
-                Status = TestStatus.Created,
-                TestFile = req.TestFile,
-                Framework = req.Framework,
-                CreatedAt = DateTime.UtcNow
-            };
-            db.Tests.Add(test);
-            await db.SaveChangesAsync();
-
-            await sse.BroadcastAsync("test:updated", new { test.Id, PlanId = plan.Id, test.TestPlanId, TaskId = req.TaskId, Status = test.Status.ToString() });
-
-            return Results.Created($"/api/tests/{test.Id}", new
-            {
-                test.Id, TestPlanId = plan.Id, TaskId = req.TaskId,
-                TestType = test.Type.ToString(),
-                Status = test.Status.ToString(),
-                test.Name, test.TestFile
-            });
-        });
-
-        // Record test result (updates Test status)
-        group.MapPost("/tests/result", async (AiTestResultRequest req, LifecycleDbContext db, SseService sse) =>
-        {
-            var test = await db.Tests.Include(t => t.TestPlan).FirstOrDefaultAsync(t => t.Id == req.TestId);
-            if (test is null) return Results.NotFound();
-
-            test.LastRunAt = DateTime.UtcNow;
-            test.LastRunOutput = req.Output;
-            test.TotalRuns++;
-
-            if (req.Passed)
-            {
-                test.PassedRuns++;
-                test.Status = TestStatus.Passing;
-            }
-            else
-            {
-                test.FailedRuns++;
-                test.Status = TestStatus.Failing;
-            }
-
-            await db.SaveChangesAsync();
-
-            await sse.BroadcastAsync("test:updated", new { test.Id, TaskId = test.TestPlan.TaskId, Status = test.Status.ToString() });
-
-            return Results.Ok(new
-            {
-                test.Id, TaskId = test.TestPlan.TaskId, Status = test.Status.ToString(),
-                test.TotalRuns, test.PassedRuns, test.FailedRuns
-            });
-        });
-
         // Full project context dump for Claude
         group.MapGet("/context", async (LifecycleDbContext db, int? projectId) =>
         {
@@ -474,7 +389,5 @@ public record PhaseBreakdownTask(string Title, string? Description = null, TaskP
 
 public record TaskTransitionRequest(TaskStatus Status, string? GitCommitSha = null, string? GitBranch = null, string? PullRequestUrl = null);
 
-public record AiRecordTestRequest(int TaskId, TestType TestType, string? TestName = null, string? TestFile = null, string? Framework = null);
-public record AiTestResultRequest(int TestId, bool Passed, string? Result = null, string? Output = null);
 
 public record PasteAttachmentRequest(int TaskId, string Base64Data, string ContentType, string? OriginalFileName = null, int? Width = null, int? Height = null);

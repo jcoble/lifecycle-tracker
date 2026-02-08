@@ -20,8 +20,8 @@ function buildTestingInstructions(settings: Record<string, string>, stage: 'writ
     const lines = [
       '=== TESTING REQUIRED (enforced by lifecycle) ===',
       '',
-      'You MUST write tests for this task before moving to Review.',
-      'Use record_test to register each test, then record_test_result after running.',
+      'You MUST write tests for this task before completing it.',
+      'Use create_test_plan to define tests with steps, then start_test_execution, record_step_result, and complete_test_execution.',
       '',
       `1. UNIT TESTS (${unitLevel} coverage)`,
       `   Command: ${unitCmd}`,
@@ -43,8 +43,8 @@ function buildTestingInstructions(settings: Record<string, string>, stage: 'writ
           ? '   Full E2E coverage including error states and edge cases.'
           : '   Skip UI tests for backend-only changes. Add smoke test if UI is affected.',
       '',
-      'After writing tests, RUN them and record results before moving to Review.',
-      'complete_task will BLOCK if tests are missing or not run.',
+      'After writing tests, RUN them through test plan executions before completing.',
+      'complete_task will BLOCK if no test plan has a passing execution.',
       '================================================',
     ];
     return lines.join('\n');
@@ -57,8 +57,8 @@ function buildTestingInstructions(settings: Record<string, string>, stage: 'writ
       `2. Run integration tests: ${integrationCmd}`,
       `3. Run UI smoke tests with ${webTool} (if applicable)`,
       '',
-      'Record results with record_test_result for each test.',
-      'complete_task will BLOCK if any tests are unrun or failing.',
+      'Record results through test plan executions (start_test_execution → record_step_result → complete_test_execution).',
+      'complete_task will BLOCK if no test plan has a passing execution.',
       '===============================================',
     ];
     return lines.join('\n');
@@ -159,15 +159,25 @@ export function registerTaskTools(server: McpServer) {
             '',
             canComplete.reason,
             '',
-            'Use record_test to register tests, record_test_result to record results,',
-            'and create_test_plan for UI test plans. Fix all issues then call complete_task again.',
+            'Use create_test_plan to define tests with steps, start_test_execution to begin,',
+            'record_step_result for each step, and complete_test_execution when done. Fix all issues then call complete_task again.',
             '=========================================================',
           ].join('\n');
 
           return { content: [{ type: 'text' as const, text: blockMsg }] };
         }
-      } catch {
-        // Endpoint not available, proceed without enforcement
+      } catch (err) {
+        // If the can-complete endpoint is unreachable, block completion rather than silently bypassing
+        const blockMsg = [
+          '=== COMPLETION BLOCKED - TEST ENFORCEMENT UNAVAILABLE ===',
+          '',
+          'Could not reach the test enforcement endpoint.',
+          `Error: ${err instanceof Error ? err.message : String(err)}`,
+          '',
+          'Ensure the lifecycle API is running and try again.',
+          '=========================================================',
+        ].join('\n');
+        return { content: [{ type: 'text' as const, text: blockMsg }] };
       }
 
       // All checks passed — complete the task
