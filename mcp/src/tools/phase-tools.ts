@@ -16,7 +16,7 @@ export function registerPhaseTools(server: McpServer) {
     },
     async ({ milestoneId, ...data }) => {
       const result = await api.post(`/milestones/${milestoneId}/phases`, data);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -28,7 +28,7 @@ export function registerPhaseTools(server: McpServer) {
     },
     async ({ phaseId }) => {
       const result = await api.get(`/phases/${phaseId}`);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -40,7 +40,7 @@ export function registerPhaseTools(server: McpServer) {
     },
     async ({ milestoneId }) => {
       const result = await api.get(`/milestones/${milestoneId}/phases`);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -65,7 +65,7 @@ export function registerPhaseTools(server: McpServer) {
       if (data.phaseNumber !== undefined) body.phaseNumber = data.phaseNumber;
       if (data.dependsOnPhaseIds !== undefined) body.dependsOnPhaseIds = data.dependsOnPhaseIds;
       const result = await api.patch(`/phases/${phaseId}`, body);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -90,7 +90,7 @@ export function registerPhaseTools(server: McpServer) {
     },
     async ({ phaseId, status }) => {
       const result = await api.post(`/phases/${phaseId}/status`, { status });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -115,7 +115,7 @@ export function registerPhaseTools(server: McpServer) {
     },
     async ({ milestoneId, phase, tasks }) => {
       const result = await api.post('/ai/phases/breakdown', { milestoneId, phase, tasks });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 }

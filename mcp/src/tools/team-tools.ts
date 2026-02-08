@@ -25,7 +25,7 @@ export function registerTeamTools(server: McpServer) {
     async ({ projectId }) => {
       const pid = projectId ?? getActiveProjectId();
       const result = await api.get(`/teams?projectId=${pid}`);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -52,7 +52,7 @@ export function registerTeamTools(server: McpServer) {
         triggerStatuses,
         spawnPromptTemplate,
       });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -62,7 +62,7 @@ export function registerTeamTools(server: McpServer) {
     {},
     async () => {
       const result = await api.get('/teams/role-templates');
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -76,7 +76,7 @@ export function registerTeamTools(server: McpServer) {
     async ({ projectId, status }) => {
       const pid = projectId ?? getActiveProjectId();
       const result = await api.get(`/teams/triggered?projectId=${pid}&status=${status}`);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -89,7 +89,7 @@ export function registerTeamTools(server: McpServer) {
     },
     async ({ teamMemberId, sessionId }) => {
       const result = await api.post(`/teams/${teamMemberId}/spawn`, { sessionId });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -102,7 +102,7 @@ export function registerTeamTools(server: McpServer) {
     },
     async ({ teamMemberId, tokensUsed }) => {
       const result = await api.post(`/teams/${teamMemberId}/shutdown`, { tokensUsed });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -116,7 +116,7 @@ export function registerTeamTools(server: McpServer) {
     },
     async ({ taskId, teamMemberId, assignedBy }) => {
       const result = await api.post(`/tasks/${taskId}/assign`, { teamMemberId, assignedBy });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -138,7 +138,7 @@ export function registerTeamTools(server: McpServer) {
           text: 'Error: teamMemberId required. Set LIFECYCLE_AGENT_NAME env var for auto-detection, or pass teamMemberId explicitly.' }] };
       }
       const result = await api.post(`/teams/${memberId}/heartbeat`, { activity, tokensUsed });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -151,7 +151,7 @@ export function registerTeamTools(server: McpServer) {
     async ({ projectId }) => {
       const pid = projectId ?? getActiveProjectId();
       const result = await api.get(`/projects/${pid}/settings`);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -165,7 +165,7 @@ export function registerTeamTools(server: McpServer) {
     async ({ projectId, settings }) => {
       const pid = projectId ?? getActiveProjectId();
       const result = await api.put(`/projects/${pid}/settings`, { settings });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 }

@@ -83,7 +83,7 @@ export function registerTaskTools(server: McpServer) {
     async ({ projectId, phaseId, tasks }) => {
       const pid = projectId ?? getActiveProjectId();
       const result = await api.post('/ai/tasks/bulk-create', { projectId: pid, phaseId, tasks });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -133,7 +133,7 @@ export function registerTaskTools(server: McpServer) {
         // Task detail parsing failed, continue
       }
 
-      const output = JSON.stringify(result, null, 2) + testingInstructions + testPlanInstructions;
+      const output = JSON.stringify(result) + testingInstructions + testPlanInstructions;
       return { content: [{ type: 'text' as const, text: output }] };
     }
   );
@@ -187,7 +187,7 @@ export function registerTaskTools(server: McpServer) {
         gitBranch,
         pullRequestUrl: prUrl,
       });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 }

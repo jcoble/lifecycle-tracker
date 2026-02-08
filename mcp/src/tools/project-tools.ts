@@ -10,7 +10,7 @@ export function registerProjectTools(server: McpServer) {
     async () => {
       const projects = await api.get('/projects');
       const activeId = getActiveProjectId();
-      return { content: [{ type: 'text' as const, text: `Active project ID: ${activeId}\n\n${JSON.stringify(projects, null, 2)}` }] };
+      return { content: [{ type: 'text' as const, text: `Active project ID: ${activeId}\n\n${JSON.stringify(projects)}` }] };
     }
   );
 
@@ -23,7 +23,7 @@ export function registerProjectTools(server: McpServer) {
     async ({ projectId }) => {
       setActiveProjectId(projectId);
       const project = await api.get(`/projects/${projectId}`);
-      return { content: [{ type: 'text' as const, text: `Active project set to ${projectId}\n\n${JSON.stringify(project, null, 2)}` }] };
+      return { content: [{ type: 'text' as const, text: `Active project set to ${projectId}\n\n${JSON.stringify(project)}` }] };
     }
   );
 
@@ -36,7 +36,7 @@ export function registerProjectTools(server: McpServer) {
     async ({ projectId }) => {
       const pid = projectId ?? getActiveProjectId();
       const context = await api.get(`/ai/context?projectId=${pid}`);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(context, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(context) }] };
     }
   );
 
@@ -59,7 +59,7 @@ export function registerProjectTools(server: McpServer) {
       if (priority) params.set('priority', priority);
       if (phaseId) params.set('phaseId', phaseId.toString());
       const tasks = await api.get(`/tasks?${params}`);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(tasks, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(tasks) }] };
     }
   );
 
@@ -73,7 +73,7 @@ export function registerProjectTools(server: McpServer) {
     async ({ projectId, limit }) => {
       const pid = projectId ?? getActiveProjectId();
       const activity = await api.get(`/projects/${pid}/activity?pageSize=${limit}`);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(activity, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(activity) }] };
     }
   );
 
@@ -86,7 +86,7 @@ export function registerProjectTools(server: McpServer) {
     async ({ projectId }) => {
       const pid = projectId ?? getActiveProjectId();
       const dashboard = await api.get(`/projects/${pid}/dashboard`);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(dashboard, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(dashboard) }] };
     }
   );
 }

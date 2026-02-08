@@ -16,7 +16,7 @@ export function registerMilestoneTools(server: McpServer) {
       if (status) {
         result = result.filter((m: any) => m.status === status);
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -28,7 +28,7 @@ export function registerMilestoneTools(server: McpServer) {
     },
     async ({ milestoneId }) => {
       const result = await api.get(`/milestones/${milestoneId}`);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -45,7 +45,7 @@ export function registerMilestoneTools(server: McpServer) {
     async ({ projectId, ...data }) => {
       const pid = projectId ?? getActiveProjectId();
       const result = await api.post(`/projects/${pid}/milestones`, data);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -66,7 +66,7 @@ export function registerMilestoneTools(server: McpServer) {
       if (data.version !== undefined) body.version = data.version;
       if (data.targetDate !== undefined) body.targetDate = data.targetDate;
       const result = await api.patch(`/milestones/${milestoneId}`, body);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -79,7 +79,7 @@ export function registerMilestoneTools(server: McpServer) {
     },
     async ({ milestoneId, status }) => {
       const result = await api.post(`/milestones/${milestoneId}/status`, { status });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 

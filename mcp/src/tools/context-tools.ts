@@ -14,7 +14,7 @@ export function registerContextTools(server: McpServer) {
     },
     async ({ taskId, base64Data, fileName, contentType }) => {
       const result = await api.post('/ai/attachments/paste', { taskId, base64Data, fileName, contentType });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 }

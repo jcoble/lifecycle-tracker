@@ -52,7 +52,7 @@ export function registerTestPlanTools(server: McpServer) {
       }
 
       const result = await api.post(`/tasks/${taskId}/test-plans`, body);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -81,7 +81,7 @@ export function registerTestPlanTools(server: McpServer) {
         });
         results.push(result);
       }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(results) }] };
     }
   );
 
@@ -98,7 +98,7 @@ export function registerTestPlanTools(server: McpServer) {
         executionMode,
         executedBy: executedBy ?? 'claude-code',
       });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -123,7 +123,7 @@ export function registerTestPlanTools(server: McpServer) {
         screenshot,
         durationMs,
       });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 
@@ -140,7 +140,7 @@ export function registerTestPlanTools(server: McpServer) {
         status,
         failureReason,
       });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );
 }
