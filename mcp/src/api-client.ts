@@ -1,5 +1,16 @@
 const API_URL = process.env.LIFECYCLE_API_URL || 'http://localhost:5556';
 const API_KEY = process.env.LIFECYCLE_API_KEY || '';
+const DEFAULT_PROJECT_ID = process.env.LIFECYCLE_PROJECT_ID ? parseInt(process.env.LIFECYCLE_PROJECT_ID, 10) : 1;
+
+let _activeProjectId: number = DEFAULT_PROJECT_ID;
+
+export function getActiveProjectId(): number {
+  return _activeProjectId;
+}
+
+export function setActiveProjectId(id: number) {
+  _activeProjectId = id;
+}
 
 export async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_URL}/api${path}`, {
@@ -22,5 +33,6 @@ export const api = {
   get: <T>(path: string) => apiRequest<T>(path),
   post: <T>(path: string, data?: unknown) => apiRequest<T>(path, { method: 'POST', body: data ? JSON.stringify(data) : undefined }),
   patch: <T>(path: string, data: unknown) => apiRequest<T>(path, { method: 'PATCH', body: JSON.stringify(data) }),
+  put: <T>(path: string, data: unknown) => apiRequest<T>(path, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (path: string) => apiRequest(path, { method: 'DELETE' }),
 };

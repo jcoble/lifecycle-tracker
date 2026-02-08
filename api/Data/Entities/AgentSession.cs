@@ -9,5 +9,7 @@ public class AgentSession
     public DateTime SpawnedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
     public int? TokensUsed { get; set; }
+    public string? CurrentActivity { get; set; }
+    public DateTime? LastHeartbeatAt { get; set; }
     public TeamMember TeamMember { get; set; } = null!;
 }

@@ -31,4 +31,5 @@ public class LifecycleTask
     public ICollection<Attachment> Attachments { get; set; } = new List<Attachment>();
     public ICollection<Comment> Comments { get; set; } = new List<Comment>();
     public ICollection<TaskLabel> TaskLabels { get; set; } = new List<TaskLabel>();
+    public ICollection<TaskAssignment> Assignments { get; set; } = new List<TaskAssignment>();
 }

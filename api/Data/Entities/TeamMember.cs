@@ -11,6 +11,7 @@ public class TeamMember
     public required string Status { get; set; } // Active, Idle, Suspended
     public string? ConfigJson { get; set; }
     public string? SpawnPromptTemplate { get; set; }
+    public string? TriggerStatuses { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? LastActiveAt { get; set; }
     public Project Project { get; set; } = null!;

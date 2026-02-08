@@ -7,9 +7,11 @@
 	import { formatDate } from '$lib/utils/date';
 	import { pasteScreenshotToTask } from '$lib/utils/clipboard';
 	import { extractPrLabel } from '$lib/utils/git';
-	import { Calendar, ClipboardPaste, GitBranch, GitPullRequest } from '@lucide/svelte';
+	import { Calendar, ClipboardPaste, GitBranch, GitPullRequest, Bot } from '@lucide/svelte';
+	import { taskAgentMap } from '$lib/stores/agentActivity';
 
 	let { task, onclick }: { task: Task; onclick?: (task: Task) => void } = $props();
+	let assignedAgent = $derived($taskAgentMap.get(task.id));
 	let showPaste = $state(false);
 
 	async function handlePaste(e: MouseEvent) {
@@ -60,6 +62,25 @@
 					{label.name}
 				</span>
 			{/each}
+		</div>
+	{/if}
+
+	<!-- Agent working indicator -->
+	{#if assignedAgent}
+		<div class="mb-1.5 flex items-center gap-1.5">
+			<span class="relative flex h-2 w-2">
+				<span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75"></span>
+				<span class="relative inline-flex h-2 w-2 rounded-full bg-green-500"></span>
+			</span>
+			<span class="flex items-center gap-1 text-[10px] font-medium text-text-secondary">
+				<Bot class="h-2.5 w-2.5" />
+				{assignedAgent.agentName}
+			</span>
+			{#if assignedAgent.currentActivity}
+				<span class="truncate text-[10px] text-text-tertiary italic max-w-[120px]" title={assignedAgent.currentActivity}>
+					{assignedAgent.currentActivity}
+				</span>
+			{/if}
 		</div>
 	{/if}
 

@@ -237,6 +237,7 @@ public class LifecycleDbContext : DbContext
             entity.HasKey(e => e.Id);
             entity.Property(e => e.SessionId).IsRequired().HasMaxLength(200);
             entity.Property(e => e.Status).IsRequired().HasMaxLength(50);
+            entity.Property(e => e.CurrentActivity).HasMaxLength(500);
             entity.HasIndex(e => e.TeamMemberId);
             entity.HasOne(e => e.TeamMember)
                 .WithMany(tm => tm.Sessions)
@@ -252,7 +253,7 @@ public class LifecycleDbContext : DbContext
             entity.HasIndex(e => e.TaskId);
             entity.HasIndex(e => e.TeamMemberId);
             entity.HasOne(e => e.Task)
-                .WithMany()
+                .WithMany(t => t.Assignments)
                 .HasForeignKey(e => e.TaskId)
                 .OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(e => e.TeamMember)

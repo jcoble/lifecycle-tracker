@@ -103,6 +103,10 @@ export interface Task {
 	attachments?: Attachment[];
 	comments?: Comment[];
 	phaseName?: string;
+	assignedTo?: {
+		teamMemberId: number;
+		agentName: string;
+	};
 }
 
 export interface TestRecord {

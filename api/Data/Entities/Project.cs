@@ -9,6 +9,7 @@ public class Project
     public string? Description { get; set; }
     public string? Repository { get; set; }
     public ProjectStatus Status { get; set; }
+    public string? Settings { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
     public ICollection<Milestone> Milestones { get; set; } = new List<Milestone>();
