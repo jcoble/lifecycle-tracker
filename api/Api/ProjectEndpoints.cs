@@ -151,8 +151,9 @@ public static class ProjectEndpoints
                 .Take(20)
                 .ToListAsync();
 
-            var testRecords = await db.TestRecords
-                .Where(t => allTasks.Select(at => at.Id).Contains(t.TaskId))
+            var taskIds = allTasks.Select(at => at.Id).ToList();
+            var allTests = await db.Tests
+                .Where(t => db.TestPlans.Where(tp => taskIds.Contains(tp.TaskId)).Select(tp => tp.Id).Contains(t.TestPlanId))
                 .ToListAsync();
 
             return Results.Ok(new
@@ -194,10 +195,10 @@ public static class ProjectEndpoints
                 },
                 TestSummary = new
                 {
-                    Total = testRecords.Count,
-                    Passing = testRecords.Count(t => t.Status == TestStatus.Passing),
-                    Failing = testRecords.Count(t => t.Status == TestStatus.Failing),
-                    NotCreated = testRecords.Count(t => t.Status == TestStatus.NotCreated)
+                    Total = allTests.Count,
+                    Passing = allTests.Count(t => t.Status == TestStatus.Passing),
+                    Failing = allTests.Count(t => t.Status == TestStatus.Failing),
+                    NotCreated = allTests.Count(t => t.Status == TestStatus.NotCreated)
                 },
                 RecentActivity = recentActivity.Select(a => new
                 {

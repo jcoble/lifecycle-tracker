@@ -1,4 +1,4 @@
-import type { TestPlan, TestStep, TestExecution, TestStepResultItem } from '$lib/types';
+import type { TestPlan, TestStep, TestExecution, TestStepResultItem, Test } from '$lib/types';
 import { api } from '../client';
 
 export const testPlans = {
@@ -13,12 +13,19 @@ export const testPlans = {
 		requiredLevel: string;
 		description?: string;
 		source?: string;
-		steps?: Array<{
-			stepType: string;
-			description: string;
-			expectedResult?: string;
-			automationCommand?: string;
-			requiresManualVerification?: boolean;
+		tests?: Array<{
+			name: string;
+			type: string;
+			description?: string;
+			testFile?: string;
+			framework?: string;
+			steps?: Array<{
+				stepType: string;
+				description: string;
+				expectedResult?: string;
+				automationCommand?: string;
+				requiresManualVerification?: boolean;
+			}>;
 		}>;
 	}) => api.post<TestPlan>(`/tasks/${taskId}/test-plans`, data),
 
@@ -28,16 +35,29 @@ export const testPlans = {
 	delete: (id: number) =>
 		api.delete(`/test-plans/${id}`),
 
-	addStep: (planId: number, data: {
+	addTest: (planId: number, data: {
+		name: string;
+		type: string;
+		description?: string;
+		testFile?: string;
+		framework?: string;
+	}) => api.post<Test>(`/test-plans/${planId}/tests`, data),
+
+	updateTest: (testId: number, data: Partial<Test>) =>
+		api.patch<Test>(`/tests/${testId}`, data),
+
+	recordTestRun: (testId: number, data: {
+		passed: boolean;
+		output?: string;
+	}) => api.post<Test>(`/tests/${testId}/run`, data),
+
+	addStep: (testId: number, data: {
 		stepType: string;
 		description: string;
 		expectedResult?: string;
 		automationCommand?: string;
 		requiresManualVerification?: boolean;
-	}) => api.post<TestStep>(`/test-plans/${planId}/steps`, data),
-
-	reorderSteps: (planId: number, items: Array<{ id: number; order: number }>) =>
-		api.patch(`/test-plans/${planId}/steps/reorder`, { items }),
+	}) => api.post<TestStep>(`/tests/${testId}/steps`, data),
 
 	startExecution: (planId: number, data: {
 		executionMode: string;

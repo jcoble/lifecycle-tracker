@@ -62,11 +62,11 @@ public static class PhaseEndpoints
         {
             var phase = await db.Phases
                 .Include(p => p.Tasks).ThenInclude(t => t.TaskLabels).ThenInclude(tl => tl.Label)
-                .Include(p => p.Tasks).ThenInclude(t => t.Tests)
+                .Include(p => p.Tasks).ThenInclude(t => t.TestPlans).ThenInclude(tp => tp.Tests)
                 .FirstOrDefaultAsync(p => p.Id == id);
             if (phase is null) return Results.NotFound();
 
-            var testRecords = phase.Tasks.SelectMany(t => t.Tests).ToList();
+            var allTests = phase.Tasks.SelectMany(t => t.TestPlans).SelectMany(tp => tp.Tests).ToList();
 
             return Results.Ok(new
             {
@@ -85,9 +85,9 @@ public static class PhaseEndpoints
                 }),
                 TestSummary = new
                 {
-                    Total = testRecords.Count,
-                    Passing = testRecords.Count(t => t.Status == TestStatus.Passing),
-                    Failing = testRecords.Count(t => t.Status == TestStatus.Failing)
+                    Total = allTests.Count,
+                    Passing = allTests.Count(t => t.Status == TestStatus.Passing),
+                    Failing = allTests.Count(t => t.Status == TestStatus.Failing)
                 }
             });
         });

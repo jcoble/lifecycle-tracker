@@ -11,6 +11,7 @@ public static class TestPlanEndpoints
     {
         var taskGroup = app.MapGroup("/api/tasks/{taskId:int}/test-plans");
         var planGroup = app.MapGroup("/api/test-plans");
+        var testGroup = app.MapGroup("/api/tests");
         var execGroup = app.MapGroup("/api/test-executions");
 
         // List test plans for a task
@@ -18,7 +19,8 @@ public static class TestPlanEndpoints
         {
             var plans = await db.TestPlans
                 .Where(tp => tp.TaskId == taskId)
-                .Include(tp => tp.Steps.OrderBy(s => s.OrderIndex))
+                .Include(tp => tp.Tests.OrderBy(t => t.OrderIndex))
+                    .ThenInclude(t => t.Steps.OrderBy(s => s.OrderIndex))
                 .Include(tp => tp.Executions.OrderByDescending(e => e.StartedAt).Take(1))
                 .OrderBy(tp => tp.RequiredLevel)
                 .ToListAsync();
@@ -26,7 +28,7 @@ public static class TestPlanEndpoints
             return Results.Ok(plans.Select(MapPlanToDto));
         });
 
-        // Create test plan for a task
+        // Create test plan for a task (with nested tests + steps)
         taskGroup.MapPost("/", async (int taskId, CreateTestPlanRequest req, LifecycleDbContext db, SseService sse) =>
         {
             var task = await db.Tasks.FindAsync(taskId);
@@ -44,21 +46,42 @@ public static class TestPlanEndpoints
                 UpdatedAt = DateTime.UtcNow
             };
 
-            if (req.Steps is { Count: > 0 })
+            if (req.Tests is { Count: > 0 })
             {
-                for (int i = 0; i < req.Steps.Count; i++)
+                for (int ti = 0; ti < req.Tests.Count; ti++)
                 {
-                    var s = req.Steps[i];
-                    plan.Steps.Add(new TestStep
+                    var t = req.Tests[ti];
+                    var test = new Test
                     {
-                        OrderIndex = i,
-                        StepType = s.StepType,
-                        Description = s.Description,
-                        ExpectedResult = s.ExpectedResult,
-                        AutomationCommand = s.AutomationCommand,
-                        RequiresManualVerification = s.RequiresManualVerification,
+                        OrderIndex = ti,
+                        Name = t.Name,
+                        Description = t.Description,
+                        Type = t.Type,
+                        Status = TestStatus.Created,
+                        TestFile = t.TestFile,
+                        Framework = t.Framework,
                         CreatedAt = DateTime.UtcNow
-                    });
+                    };
+
+                    if (t.Steps is { Count: > 0 })
+                    {
+                        for (int si = 0; si < t.Steps.Count; si++)
+                        {
+                            var s = t.Steps[si];
+                            test.Steps.Add(new TestStep
+                            {
+                                OrderIndex = si,
+                                StepType = s.StepType,
+                                Description = s.Description,
+                                ExpectedResult = s.ExpectedResult,
+                                AutomationCommand = s.AutomationCommand,
+                                RequiresManualVerification = s.RequiresManualVerification,
+                                CreatedAt = DateTime.UtcNow
+                            });
+                        }
+                    }
+
+                    plan.Tests.Add(test);
                 }
             }
 
@@ -70,11 +93,12 @@ public static class TestPlanEndpoints
             return Results.Created($"/api/test-plans/{plan.Id}", MapPlanToDto(plan));
         });
 
-        // Get test plan with steps
+        // Get test plan with tests + steps
         planGroup.MapGet("/{id:int}", async (int id, LifecycleDbContext db) =>
         {
             var plan = await db.TestPlans
-                .Include(tp => tp.Steps.OrderBy(s => s.OrderIndex))
+                .Include(tp => tp.Tests.OrderBy(t => t.OrderIndex))
+                    .ThenInclude(t => t.Steps.OrderBy(s => s.OrderIndex))
                 .Include(tp => tp.Executions.OrderByDescending(e => e.StartedAt))
                     .ThenInclude(e => e.StepResults)
                 .FirstOrDefaultAsync(tp => tp.Id == id);
@@ -110,16 +134,88 @@ public static class TestPlanEndpoints
             return Results.NoContent();
         });
 
-        // Add step to plan
-        planGroup.MapPost("/{id:int}/steps", async (int id, CreateTestStepRequest req, LifecycleDbContext db) =>
+        // Add test to plan
+        planGroup.MapPost("/{id:int}/tests", async (int id, CreateTestRequest req, LifecycleDbContext db, SseService sse) =>
         {
-            var plan = await db.TestPlans.Include(tp => tp.Steps).FirstOrDefaultAsync(tp => tp.Id == id);
+            var plan = await db.TestPlans.Include(tp => tp.Tests).FirstOrDefaultAsync(tp => tp.Id == id);
             if (plan is null) return Results.NotFound();
 
-            var maxOrder = plan.Steps.Any() ? plan.Steps.Max(s => s.OrderIndex) : -1;
-            var step = new TestStep
+            var maxOrder = plan.Tests.Any() ? plan.Tests.Max(t => t.OrderIndex) : -1;
+            var test = new Test
             {
                 TestPlanId = id,
+                OrderIndex = maxOrder + 1,
+                Name = req.Name,
+                Description = req.Description,
+                Type = req.Type,
+                Status = TestStatus.Created,
+                TestFile = req.TestFile,
+                Framework = req.Framework,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            db.Tests.Add(test);
+            await db.SaveChangesAsync();
+
+            await sse.BroadcastAsync("test:updated", new { PlanId = id, plan.TaskId });
+
+            return Results.Created($"/api/tests/{test.Id}", MapTestToDto(test));
+        });
+
+        // Update test metadata/status
+        testGroup.MapPatch("/{id:int}", async (int id, UpdateTestRequest req, LifecycleDbContext db) =>
+        {
+            var test = await db.Tests.FindAsync(id);
+            if (test is null) return Results.NotFound();
+
+            if (req.Name is not null) test.Name = req.Name;
+            if (req.Description is not null) test.Description = req.Description;
+            if (req.TestFile is not null) test.TestFile = req.TestFile;
+            if (req.Framework is not null) test.Framework = req.Framework;
+            if (req.Status.HasValue) test.Status = req.Status.Value;
+
+            await db.SaveChangesAsync();
+            return Results.Ok(MapTestToDto(test));
+        });
+
+        // Record a pass/fail run for a test
+        testGroup.MapPost("/{id:int}/run", async (int id, RunTestRequest req, LifecycleDbContext db, SseService sse) =>
+        {
+            var test = await db.Tests.Include(t => t.TestPlan).FirstOrDefaultAsync(t => t.Id == id);
+            if (test is null) return Results.NotFound();
+
+            test.LastRunAt = DateTime.UtcNow;
+            test.LastRunOutput = req.Output;
+            test.TotalRuns++;
+
+            if (req.Passed)
+            {
+                test.PassedRuns++;
+                test.Status = TestStatus.Passing;
+            }
+            else
+            {
+                test.FailedRuns++;
+                test.Status = TestStatus.Failing;
+            }
+
+            await db.SaveChangesAsync();
+
+            await sse.BroadcastAsync("test:updated", new { test.Id, PlanId = test.TestPlanId, test.TestPlan.TaskId, Status = test.Status.ToString() });
+
+            return Results.Ok(MapTestToDto(test));
+        });
+
+        // Add step to a test
+        testGroup.MapPost("/{id:int}/steps", async (int id, CreateTestStepRequest req, LifecycleDbContext db) =>
+        {
+            var test = await db.Tests.Include(t => t.Steps).FirstOrDefaultAsync(t => t.Id == id);
+            if (test is null) return Results.NotFound();
+
+            var maxOrder = test.Steps.Any() ? test.Steps.Max(s => s.OrderIndex) : -1;
+            var step = new TestStep
+            {
+                TestId = id,
                 OrderIndex = maxOrder + 1,
                 StepType = req.StepType,
                 Description = req.Description,
@@ -132,37 +228,25 @@ public static class TestPlanEndpoints
             db.TestSteps.Add(step);
             await db.SaveChangesAsync();
 
-            return Results.Created($"/api/test-plans/{id}/steps/{step.Id}", MapStepToDto(step));
-        });
-
-        // Reorder steps
-        planGroup.MapPatch("/{id:int}/steps/reorder", async (int id, ReorderStepsRequest req, LifecycleDbContext db) =>
-        {
-            var steps = await db.TestSteps.Where(s => s.TestPlanId == id).ToListAsync();
-            foreach (var item in req.Items)
-            {
-                var step = steps.FirstOrDefault(s => s.Id == item.Id);
-                if (step is not null) step.OrderIndex = item.Order;
-            }
-            await db.SaveChangesAsync();
-            return Results.NoContent();
+            return Results.Created($"/api/tests/{id}/steps/{step.Id}", MapStepToDto(step));
         });
 
         // Start execution of a test plan
         planGroup.MapPost("/{id:int}/execute", async (int id, StartExecutionRequest req, LifecycleDbContext db, SseService sse) =>
         {
             var plan = await db.TestPlans
-                .Include(tp => tp.Steps)
+                .Include(tp => tp.Tests).ThenInclude(t => t.Steps)
                 .FirstOrDefaultAsync(tp => tp.Id == id);
             if (plan is null) return Results.NotFound();
 
+            var totalSteps = plan.Tests.Sum(t => t.Steps.Count);
             var execution = new TestExecution
             {
                 TestPlanId = id,
                 ExecutionMode = req.ExecutionMode,
                 Status = TestExecutionStatus.Running,
                 StartedAt = DateTime.UtcNow,
-                TotalSteps = plan.Steps.Count,
+                TotalSteps = totalSteps,
                 ExecutedBy = req.ExecutedBy
             };
 
@@ -254,6 +338,8 @@ public static class TestPlanEndpoints
         {
             var task = await db.Tasks
                 .Include(t => t.TestPlans)
+                    .ThenInclude(tp => tp.Tests)
+                .Include(t => t.TestPlans)
                     .ThenInclude(tp => tp.Executions)
                 .FirstOrDefaultAsync(t => t.Id == taskId);
 
@@ -262,19 +348,40 @@ public static class TestPlanEndpoints
             if (!task.RequiredTestLevel.HasValue)
                 return Results.Ok(new { CanComplete = true, Reason = (string?)null });
 
+            // Gather all tests across all plans
+            var allTests = task.TestPlans.SelectMany(tp => tp.Tests).ToList();
+
+            if (allTests.Count == 0)
+                return Results.Ok(new { CanComplete = false, Reason = "No tests created. Create tests within a test plan first." });
+
+            var hasUnit = allTests.Any(t => t.Type == TestType.Unit);
+            var hasIntegration = allTests.Any(t => t.Type == TestType.Integration);
+            var anyFailing = allTests.Any(t => t.Status == TestStatus.Failing);
+            var anyNotRun = allTests.Any(t => t.Status == TestStatus.Created || t.Status == TestStatus.NotCreated);
+
+            var issues = new List<string>();
+            if (!hasUnit) issues.Add("No Unit test found");
+            if (!hasIntegration) issues.Add("No Integration test found");
+            if (anyFailing) issues.Add("Some tests are failing");
+            if (anyNotRun) issues.Add("Some tests have not been run yet");
+
+            // Also check for a passing execution at the required level
             var qualifyingPlan = task.TestPlans
                 .FirstOrDefault(tp => tp.RequiredLevel >= task.RequiredTestLevel.Value
                     && tp.Executions.Any(e => e.Status == TestExecutionStatus.Passed));
 
-            if (qualifyingPlan is not null)
-                return Results.Ok(new { CanComplete = true, Reason = (string?)null });
+            if (qualifyingPlan is null)
+            {
+                var hasAnyPlan = task.TestPlans.Any(tp => tp.RequiredLevel >= task.RequiredTestLevel.Value);
+                issues.Add(hasAnyPlan
+                    ? "Test plan exists but no passing execution yet"
+                    : $"No test plan at level {task.RequiredTestLevel.Value} or above");
+            }
 
-            var hasAnyPlan = task.TestPlans.Any(tp => tp.RequiredLevel >= task.RequiredTestLevel.Value);
-            var reason = hasAnyPlan
-                ? "Test plan exists but no passing execution yet"
-                : $"No test plan at level {task.RequiredTestLevel.Value} or above";
+            if (issues.Count > 0)
+                return Results.Ok(new { CanComplete = false, Reason = string.Join("; ", issues) });
 
-            return Results.Ok(new { CanComplete = false, Reason = reason });
+            return Results.Ok(new { CanComplete = true, Reason = (string?)null });
         });
 
         return app;
@@ -289,8 +396,10 @@ public static class TestPlanEndpoints
             RequiredLevel = tp.RequiredLevel.ToString(),
             Status = tp.Status.ToString(),
             Source = tp.Source.ToString(),
-            StepCount = tp.Steps?.Count ?? 0,
+            TestCount = tp.Tests?.Count ?? 0,
+            StepCount = tp.Tests?.Sum(t => t.Steps?.Count ?? 0) ?? 0,
             tp.CreatedAt, tp.UpdatedAt,
+            Tests = tp.Tests?.Select(MapTestToDto),
             LatestExecution = latestExec is null ? null : new
             {
                 latestExec.Id,
@@ -308,7 +417,17 @@ public static class TestPlanEndpoints
         Status = tp.Status.ToString(),
         Source = tp.Source.ToString(),
         tp.CreatedAt, tp.UpdatedAt,
-        Steps = tp.Steps.Select(MapStepToDto),
+        Tests = tp.Tests.Select(t => new
+        {
+            t.Id, t.TestPlanId, t.OrderIndex, t.Name, t.Description,
+            Type = t.Type.ToString(),
+            Status = t.Status.ToString(),
+            t.TestFile, t.Framework,
+            t.LastRunAt, t.LastRunOutput,
+            t.TotalRuns, t.PassedRuns, t.FailedRuns,
+            t.CreatedAt,
+            Steps = t.Steps.Select(MapStepToDto)
+        }),
         Executions = tp.Executions.Select(e => new
         {
             e.Id,
@@ -320,9 +439,22 @@ public static class TestPlanEndpoints
         })
     };
 
+    private static object MapTestToDto(Test t) => new
+    {
+        t.Id, t.TestPlanId, t.OrderIndex, t.Name, t.Description,
+        Type = t.Type.ToString(),
+        Status = t.Status.ToString(),
+        t.TestFile, t.Framework,
+        t.LastRunAt, t.LastRunOutput,
+        t.TotalRuns, t.PassedRuns, t.FailedRuns,
+        t.CreatedAt,
+        StepCount = t.Steps?.Count ?? 0,
+        Steps = t.Steps?.Select(MapStepToDto)
+    };
+
     private static object MapStepToDto(TestStep s) => new
     {
-        s.Id, s.TestPlanId, s.OrderIndex,
+        s.Id, s.TestId, s.OrderIndex,
         StepType = s.StepType.ToString(),
         s.Description, s.ExpectedResult, s.AutomationCommand,
         s.RequiresManualVerification, s.CreatedAt
@@ -366,6 +498,14 @@ public record CreateTestPlanRequest(
     TestLevel RequiredLevel,
     string? Description = null,
     TestPlanSource? Source = null,
+    List<CreateTestInPlanRequest>? Tests = null);
+
+public record CreateTestInPlanRequest(
+    string Name,
+    TestType Type,
+    string? Description = null,
+    string? TestFile = null,
+    string? Framework = null,
     List<CreateTestStepRequest>? Steps = null);
 
 public record UpdateTestPlanRequest(
@@ -374,15 +514,28 @@ public record UpdateTestPlanRequest(
     TestLevel? RequiredLevel = null,
     TestPlanStatus? Status = null);
 
+public record CreateTestRequest(
+    string Name,
+    TestType Type,
+    string? Description = null,
+    string? TestFile = null,
+    string? Framework = null);
+
+public record UpdateTestRequest(
+    string? Name = null,
+    string? Description = null,
+    string? TestFile = null,
+    string? Framework = null,
+    TestStatus? Status = null);
+
+public record RunTestRequest(bool Passed, string? Output = null);
+
 public record CreateTestStepRequest(
     TestStepType StepType,
     string Description,
     string? ExpectedResult = null,
     string? AutomationCommand = null,
     bool RequiresManualVerification = false);
-
-public record ReorderStepsRequest(List<ReorderStepItem> Items);
-public record ReorderStepItem(int Id, int Order);
 
 public record StartExecutionRequest(
     TestExecutionMode ExecutionMode,

@@ -14,6 +14,6 @@ public class TestPlan
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
     public LifecycleTask Task { get; set; } = null!;
-    public ICollection<TestStep> Steps { get; set; } = new List<TestStep>();
+    public ICollection<Test> Tests { get; set; } = new List<Test>();
     public ICollection<TestExecution> Executions { get; set; } = new List<TestExecution>();
 }

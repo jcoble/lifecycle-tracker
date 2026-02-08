@@ -6,7 +6,6 @@
 	import StatusBadge from '$lib/components/shared/StatusBadge.svelte';
 	import PriorityBadge from '$lib/components/shared/PriorityBadge.svelte';
 	import AIBadge from '$lib/components/shared/AIBadge.svelte';
-	import TestStatusBadge from '$lib/components/shared/TestStatusBadge.svelte';
 	import TestPlanCard from '$lib/components/testing/TestPlanCard.svelte';
 	import TestPlanEditor from '$lib/components/testing/TestPlanEditor.svelte';
 	import TestingRequirementBadge from '$lib/components/testing/TestingRequirementBadge.svelte';
@@ -333,26 +332,6 @@
 			{/if}
 			<ClipboardDropZone taskId={task.id} onUpload={handleAttachmentUpload} />
 		</div>
-
-		<!-- Tests -->
-		{#if task.tests && task.tests.length > 0}
-			<div>
-				<label class="mb-1 block text-xs text-text-tertiary">Tests</label>
-				<div class="space-y-1">
-					{#each task.tests as test}
-						<div class="flex items-center justify-between rounded-md border border-border bg-surface px-3 py-1.5">
-							<div class="flex items-center gap-2">
-								<TestStatusBadge testType={test.testType} status={test.status} />
-								<span class="text-sm text-text-secondary">{test.testName || test.testType}</span>
-							</div>
-							<span class="text-xs text-text-tertiary">
-								{test.passedRuns}/{test.totalRuns} passed
-							</span>
-						</div>
-					{/each}
-				</div>
-			</div>
-		{/if}
 
 		<!-- Test Plans -->
 		<div>

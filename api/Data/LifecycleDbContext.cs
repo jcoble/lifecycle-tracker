@@ -12,8 +12,8 @@ public class LifecycleDbContext : DbContext
     public DbSet<Milestone> Milestones => Set<Milestone>();
     public DbSet<Phase> Phases => Set<Phase>();
     public DbSet<LifecycleTask> Tasks => Set<LifecycleTask>();
-    public DbSet<TestRecord> TestRecords => Set<TestRecord>();
     public DbSet<TestPlan> TestPlans => Set<TestPlan>();
+    public DbSet<Test> Tests => Set<Test>();
     public DbSet<TestStep> TestSteps => Set<TestStep>();
     public DbSet<TestExecution> TestExecutions => Set<TestExecution>();
     public DbSet<TestStepResult> TestStepResults => Set<TestStepResult>();
@@ -88,19 +88,6 @@ public class LifecycleDbContext : DbContext
                 .OnDelete(DeleteBehavior.SetNull);
         });
 
-        modelBuilder.Entity<TestRecord>(entity =>
-        {
-            entity.HasKey(e => e.Id);
-            entity.Property(e => e.TestName).HasMaxLength(500);
-            entity.Property(e => e.TestFile).HasMaxLength(500);
-            entity.Property(e => e.Framework).HasMaxLength(100);
-            entity.HasIndex(e => e.TaskId);
-            entity.HasOne(e => e.Task)
-                .WithMany(t => t.Tests)
-                .HasForeignKey(e => e.TaskId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
-
         modelBuilder.Entity<TestPlan>(entity =>
         {
             entity.HasKey(e => e.Id);
@@ -113,16 +100,30 @@ public class LifecycleDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
+        modelBuilder.Entity<Test>(entity =>
+        {
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Name).IsRequired().HasMaxLength(500);
+            entity.Property(e => e.Description).HasMaxLength(2000);
+            entity.Property(e => e.TestFile).HasMaxLength(500);
+            entity.Property(e => e.Framework).HasMaxLength(100);
+            entity.HasIndex(e => e.TestPlanId);
+            entity.HasOne(e => e.TestPlan)
+                .WithMany(tp => tp.Tests)
+                .HasForeignKey(e => e.TestPlanId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
         modelBuilder.Entity<TestStep>(entity =>
         {
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Description).IsRequired();
             entity.Property(e => e.ExpectedResult).HasMaxLength(2000);
             entity.Property(e => e.AutomationCommand).HasMaxLength(1000);
-            entity.HasIndex(e => e.TestPlanId);
-            entity.HasOne(e => e.TestPlan)
-                .WithMany(tp => tp.Steps)
-                .HasForeignKey(e => e.TestPlanId)
+            entity.HasIndex(e => e.TestId);
+            entity.HasOne(e => e.Test)
+                .WithMany(t => t.Steps)
+                .HasForeignKey(e => e.TestId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
 

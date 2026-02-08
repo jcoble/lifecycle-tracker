@@ -44,7 +44,6 @@ app.MapProjectEndpoints();
 app.MapMilestoneEndpoints();
 app.MapPhaseEndpoints();
 app.MapTaskEndpoints();
-app.MapTestEndpoints();
 app.MapTestPlanEndpoints();
 app.MapAttachmentEndpoints();
 app.MapCommentEndpoints();

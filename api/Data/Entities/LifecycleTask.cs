@@ -28,7 +28,6 @@ public class LifecycleTask
     public DateTime UpdatedAt { get; set; }
     public Project Project { get; set; } = null!;
     public Phase? Phase { get; set; }
-    public ICollection<TestRecord> Tests { get; set; } = new List<TestRecord>();
     public ICollection<TestPlan> TestPlans { get; set; } = new List<TestPlan>();
     public ICollection<Attachment> Attachments { get; set; } = new List<Attachment>();
     public ICollection<Comment> Comments { get; set; } = new List<Comment>();

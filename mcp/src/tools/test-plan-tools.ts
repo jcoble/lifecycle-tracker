@@ -11,15 +11,22 @@ export function registerTestPlanTools(server: McpServer) {
       name: z.string().describe('Test plan name (e.g., "Carrier Required - Smoke Test")'),
       testLevel: z.enum(['Smoke', 'Comprehensive', 'FullE2E']).describe('UI testing depth level'),
       description: z.string().optional().describe('Plan description'),
-      steps: z.array(z.object({
-        stepType: z.enum(['Setup', 'Action', 'Assertion', 'Teardown']).default('Action'),
-        description: z.string().describe('What to do in this step'),
-        expectedResult: z.string().optional().describe('Expected outcome'),
-        automationCommand: z.string().optional().describe('agent-browser command for this step'),
-        requiresManualVerification: z.boolean().default(false),
-      })).optional().describe('Test steps (can also add later with add_test_steps)'),
+      tests: z.array(z.object({
+        name: z.string().describe('Test name'),
+        type: z.enum(['Unit', 'Integration', 'UI', 'Manual']).describe('Test type'),
+        description: z.string().optional(),
+        testFile: z.string().optional().describe('Path to test file'),
+        framework: z.string().optional().describe('Test framework'),
+        steps: z.array(z.object({
+          stepType: z.enum(['Setup', 'Action', 'Assertion', 'Teardown']).default('Action'),
+          description: z.string().describe('What to do in this step'),
+          expectedResult: z.string().optional().describe('Expected outcome'),
+          automationCommand: z.string().optional().describe('agent-browser command for this step'),
+          requiresManualVerification: z.boolean().default(false),
+        })).optional().describe('Test steps'),
+      })).optional().describe('Tests with nested steps'),
     },
-    async ({ taskId, name, testLevel, description, steps }) => {
+    async ({ taskId, name, testLevel, description, tests }) => {
       const body: Record<string, unknown> = {
         name,
         requiredLevel: testLevel,
@@ -27,13 +34,20 @@ export function registerTestPlanTools(server: McpServer) {
         source: 'AI_Generated',
       };
 
-      if (steps && steps.length > 0) {
-        body.steps = steps.map(s => ({
-          stepType: s.stepType,
-          description: s.description,
-          expectedResult: s.expectedResult,
-          automationCommand: s.automationCommand,
-          requiresManualVerification: s.requiresManualVerification,
+      if (tests && tests.length > 0) {
+        body.tests = tests.map(t => ({
+          name: t.name,
+          type: t.type,
+          description: t.description,
+          testFile: t.testFile,
+          framework: t.framework,
+          steps: t.steps?.map(s => ({
+            stepType: s.stepType,
+            description: s.description,
+            expectedResult: s.expectedResult,
+            automationCommand: s.automationCommand,
+            requiresManualVerification: s.requiresManualVerification,
+          })),
         }));
       }
 
@@ -43,10 +57,40 @@ export function registerTestPlanTools(server: McpServer) {
   );
 
   server.tool(
-    'add_test_steps',
-    'Add steps to an existing test plan',
+    'record_test',
+    'Record that a test file was created for a task. Creates a Test under an auto-generated plan.',
     {
-      testPlanId: z.number().describe('Test plan ID'),
+      taskId: z.number().describe('Task ID'),
+      testType: z.enum(['Unit', 'Integration', 'UI', 'Manual']).describe('Type of test'),
+      testName: z.string().describe('Test name or description'),
+      testFile: z.string().optional().describe('Path to test file'),
+      framework: z.string().optional().describe('Test framework (e.g., xUnit, Playwright)'),
+    },
+    async (args) => {
+      const result = await api.post('/ai/tests/record', args);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'record_test_result',
+    'Record the result of running tests',
+    {
+      testId: z.number().describe('Test ID'),
+      passed: z.boolean().describe('Whether the test passed'),
+      output: z.string().optional().describe('Test output/log'),
+    },
+    async (args) => {
+      const result = await api.post('/ai/tests/result', args);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    }
+  );
+
+  server.tool(
+    'add_test_steps',
+    'Add steps to an existing test',
+    {
+      testId: z.number().describe('Test ID'),
       steps: z.array(z.object({
         stepType: z.enum(['Setup', 'Action', 'Assertion', 'Teardown']).default('Action'),
         description: z.string().describe('What to do in this step'),
@@ -55,10 +99,10 @@ export function registerTestPlanTools(server: McpServer) {
         requiresManualVerification: z.boolean().default(false),
       })).describe('Steps to add'),
     },
-    async ({ testPlanId, steps }) => {
+    async ({ testId, steps }) => {
       const results = [];
       for (const s of steps) {
-        const result = await api.post(`/test-plans/${testPlanId}/steps`, {
+        const result = await api.post(`/tests/${testId}/steps`, {
           stepType: s.stepType,
           description: s.description,
           expectedResult: s.expectedResult,

@@ -190,46 +190,71 @@ public static class AiEndpoints
             {
                 task.Id, task.Title, Status = task.Status.ToString(),
                 task.StartedAt, task.CompletedAt,
+                task.RequiredTestLevel,
                 TriggeredAgents = triggeredAgents ?? Array.Empty<object>()
             });
         });
 
-        // Record test file creation
+        // Record test (creates Test entity under auto-created plan)
         group.MapPost("/tests/record", async (AiRecordTestRequest req, LifecycleDbContext db, SseService sse) =>
         {
-            var task = await db.Tasks.FindAsync(req.TaskId);
+            var task = await db.Tasks
+                .Include(t => t.TestPlans)
+                    .ThenInclude(tp => tp.Tests)
+                .FirstOrDefaultAsync(t => t.Id == req.TaskId);
             if (task is null) return Results.NotFound();
 
-            var test = new TestRecord
+            // Find or create an auto-generated plan for this task
+            var plan = task.TestPlans.FirstOrDefault(tp => tp.Source == TestPlanSource.AI_Generated);
+            if (plan is null)
             {
-                TaskId = req.TaskId,
-                TestType = req.TestType,
+                plan = new TestPlan
+                {
+                    TaskId = req.TaskId,
+                    Name = "Auto-generated Test Plan",
+                    RequiredLevel = task.RequiredTestLevel ?? TestLevel.Smoke,
+                    Status = TestPlanStatus.Draft,
+                    Source = TestPlanSource.AI_Generated,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                db.TestPlans.Add(plan);
+                await db.SaveChangesAsync();
+            }
+
+            var maxOrder = plan.Tests.Any() ? plan.Tests.Max(t => t.OrderIndex) : -1;
+            var test = new Test
+            {
+                TestPlanId = plan.Id,
+                OrderIndex = maxOrder + 1,
+                Name = req.TestName ?? req.TestType.ToString(),
+                Type = req.TestType,
                 Status = TestStatus.Created,
-                TestName = req.TestName,
                 TestFile = req.TestFile,
                 Framework = req.Framework,
                 CreatedAt = DateTime.UtcNow
             };
-            db.TestRecords.Add(test);
+            db.Tests.Add(test);
             await db.SaveChangesAsync();
 
-            await sse.BroadcastAsync("test:updated", new { test.Id, test.TaskId, Status = test.Status.ToString() });
+            await sse.BroadcastAsync("test:updated", new { test.Id, PlanId = plan.Id, test.TestPlanId, TaskId = req.TaskId, Status = test.Status.ToString() });
 
             return Results.Created($"/api/tests/{test.Id}", new
             {
-                test.Id, test.TaskId, TestType = test.TestType.ToString(),
-                Status = test.Status.ToString(), test.TestName, test.TestFile
+                test.Id, TestPlanId = plan.Id, TaskId = req.TaskId,
+                TestType = test.Type.ToString(),
+                Status = test.Status.ToString(),
+                test.Name, test.TestFile
             });
         });
 
-        // Record test result
+        // Record test result (updates Test status)
         group.MapPost("/tests/result", async (AiTestResultRequest req, LifecycleDbContext db, SseService sse) =>
         {
-            var test = await db.TestRecords.FindAsync(req.TestId);
+            var test = await db.Tests.Include(t => t.TestPlan).FirstOrDefaultAsync(t => t.Id == req.TestId);
             if (test is null) return Results.NotFound();
 
             test.LastRunAt = DateTime.UtcNow;
-            test.LastRunResult = req.Result;
             test.LastRunOutput = req.Output;
             test.TotalRuns++;
 
@@ -246,11 +271,11 @@ public static class AiEndpoints
 
             await db.SaveChangesAsync();
 
-            await sse.BroadcastAsync("test:updated", new { test.Id, test.TaskId, Status = test.Status.ToString() });
+            await sse.BroadcastAsync("test:updated", new { test.Id, TaskId = test.TestPlan.TaskId, Status = test.Status.ToString() });
 
             return Results.Ok(new
             {
-                test.Id, test.TaskId, Status = test.Status.ToString(),
+                test.Id, TaskId = test.TestPlan.TaskId, Status = test.Status.ToString(),
                 test.TotalRuns, test.PassedRuns, test.FailedRuns
             });
         });
@@ -259,7 +284,7 @@ public static class AiEndpoints
         group.MapGet("/context", async (LifecycleDbContext db, int? projectId) =>
         {
             var query = db.Projects
-                .Include(p => p.Milestones).ThenInclude(m => m.Phases).ThenInclude(ph => ph.Tasks).ThenInclude(t => t.Tests)
+                .Include(p => p.Milestones).ThenInclude(m => m.Phases).ThenInclude(ph => ph.Tasks).ThenInclude(t => t.TestPlans).ThenInclude(tp => tp.Tests)
                 .Include(p => p.Milestones).ThenInclude(m => m.Phases).ThenInclude(ph => ph.Tasks).ThenInclude(t => t.TaskLabels).ThenInclude(tl => tl.Label)
                 .Include(p => p.Labels)
                 .AsQueryable();
@@ -282,21 +307,13 @@ public static class AiEndpoints
                 .SelectMany(p => p.Tasks)
                 .ToList();
 
-            var allTests = allTasks.SelectMany(t => t.Tests).ToList();
+            var allTests = allTasks.SelectMany(t => t.TestPlans).SelectMany(tp => tp.Tests).ToList();
 
             var recentActivity = await db.ActivityLogs
                 .Where(a => a.ProjectId == project.Id)
                 .OrderByDescending(a => a.CreatedAt)
                 .Take(10)
                 .ToListAsync();
-
-            var phases = activeMilestone?.Phases.OrderBy(p => p.OrderIndex).Select(p => new
-            {
-                p.Id, p.Name, p.PhaseNumber,
-                Status = p.Status.ToString(),
-                TaskCount = p.Tasks.Count,
-                DoneCount = p.Tasks.Count(t => t.Status == TaskStatus.Done)
-            });
 
             return Results.Ok(new
             {
@@ -319,16 +336,22 @@ public static class AiEndpoints
                             Status = t.Status.ToString(),
                             Priority = t.Priority.ToString(),
                             Type = t.Type.ToString(),
-                            Tests = t.Tests.Select(tr => new
+                            Tests = t.TestPlans.SelectMany(tp => tp.Tests).Select(tr => new
                             {
-                                tr.Id, tr.TestName,
+                                tr.Id, tr.Name,
                                 Status = tr.Status.ToString()
                             }),
                             Labels = t.TaskLabels.Select(tl => tl.Label.Name)
                         })
                     })
                 },
-                Phases = phases,
+                Phases = (activeMilestone?.Phases ?? []).OrderBy(p => p.OrderIndex).Select(p => new
+                {
+                    p.Id, p.Name, p.PhaseNumber,
+                    Status = p.Status.ToString(),
+                    TaskCount = p.Tasks.Count,
+                    DoneCount = p.Tasks.Count(t => t.Status == TaskStatus.Done)
+                }),
                 TaskSummary = new
                 {
                     Total = allTasks.Count,
@@ -414,18 +437,19 @@ public static class AiEndpoints
             return Results.Ok(new { project.Id, Settings = settings });
         });
 
-        // Get test records for a task (for MCP test enforcement)
+        // Get tests for a task (from all test plans)
         group.MapGet("/tasks/{id:int}/tests", async (int id, LifecycleDbContext db) =>
         {
-            var tests = await db.TestRecords
-                .Where(t => t.TaskId == id)
+            var tests = await db.Tests
+                .Include(t => t.TestPlan)
+                .Where(t => t.TestPlan.TaskId == id)
                 .Select(t => new
                 {
-                    t.Id, t.TaskId,
-                    TestType = t.TestType.ToString(),
+                    t.Id, TaskId = t.TestPlan.TaskId,
+                    TestType = t.Type.ToString(),
                     Status = t.Status.ToString(),
-                    t.TestName, t.TestFile,
-                    t.LastRunAt, t.LastRunResult
+                    t.Name, t.TestFile,
+                    t.LastRunAt, t.LastRunOutput
                 })
                 .ToListAsync();
             return Results.Ok(tests);

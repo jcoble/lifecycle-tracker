@@ -7,15 +7,6 @@ interface ProjectSettings {
   settings: Record<string, string>;
 }
 
-interface TestRecord {
-  id: number;
-  taskId: number;
-  testType: string;
-  status: string;
-  testName: string;
-  lastRunAt: string | null;
-  lastRunResult: string | null;
-}
 
 function buildTestingInstructions(settings: Record<string, string>, stage: 'write' | 'run'): string {
   const unitLevel = settings.unitTestLevel || 'Full';
@@ -157,67 +148,26 @@ export function registerTaskTools(server: McpServer) {
       prUrl: z.string().optional().describe('Pull request URL'),
     },
     async ({ taskId, commitSha, gitBranch, prUrl }) => {
-      // Check test enforcement BEFORE completing
-      let enforcement = false;
+      // Check test enforcement via unified can-complete endpoint
       try {
-        const projectSettings = await api.get<ProjectSettings>('/ai/settings');
-        enforcement = projectSettings?.settings?.testEnforcement === 'true';
-      } catch {
-        // Continue without enforcement if settings unavailable
-      }
-
-      if (enforcement) {
-        // Fetch test records for this task
-        let tests: TestRecord[] = [];
-        try {
-          tests = await api.get<TestRecord[]>(`/ai/tasks/${taskId}/tests`);
-        } catch {
-          // If endpoint doesn't exist yet, skip check
-        }
-
-        const hasUnit = tests.some(t => t.testType === 'Unit');
-        const hasIntegration = tests.some(t => t.testType === 'Integration');
-        const allRun = tests.length > 0 && tests.every(t => t.lastRunAt !== null);
-        const anyFailing = tests.some(t => t.status === 'Failing');
-
-        const issues: string[] = [];
-        if (tests.length === 0) {
-          issues.push('NO TESTS RECORDED. You must write tests and register them with record_test before completing.');
-        } else {
-          if (!hasUnit) issues.push('No UNIT test recorded. Write unit tests and register with record_test.');
-          if (!hasIntegration) issues.push('No INTEGRATION test recorded. Write integration tests and register with record_test.');
-          if (!allRun) issues.push('Some tests have NOT BEEN RUN. Execute tests and record results with record_test_result.');
-          if (anyFailing) issues.push('Some tests are FAILING. Fix failures before completing.');
-        }
-
-        // Check UI test plan requirements via can-complete endpoint
-        try {
-          const canComplete = await api.get<{ canComplete: boolean; reason: string | null }>(
-            `/tasks/${taskId}/can-complete`
-          );
-          if (!canComplete.canComplete) {
-            issues.push(`UI TEST PLAN BLOCKED: ${canComplete.reason}. Create a test plan with create_test_plan, run it with agent-browser, and record results.`);
-          }
-        } catch {
-          // Endpoint not available, skip test plan check
-        }
-
-        if (issues.length > 0) {
+        const canComplete = await api.get<{ canComplete: boolean; reason: string | null }>(
+          `/tasks/${taskId}/can-complete`
+        );
+        if (!canComplete.canComplete) {
           const blockMsg = [
             '=== COMPLETION BLOCKED BY LIFECYCLE TEST ENFORCEMENT ===',
             '',
-            ...issues,
+            canComplete.reason,
             '',
-            `Tests found: ${tests.length} (Unit: ${tests.filter(t => t.testType === 'Unit').length}, Integration: ${tests.filter(t => t.testType === 'Integration').length}, E2E: ${tests.filter(t => t.testType === 'EndToEnd').length})`,
-            `Tests run: ${tests.filter(t => t.lastRunAt).length}/${tests.length}`,
-            `Tests passing: ${tests.filter(t => t.status === 'Passing').length}/${tests.length}`,
-            '',
-            'Write and run the missing tests, then call complete_task again.',
+            'Use record_test to register tests, record_test_result to record results,',
+            'and create_test_plan for UI test plans. Fix all issues then call complete_task again.',
             '=========================================================',
           ].join('\n');
 
           return { content: [{ type: 'text' as const, text: blockMsg }] };
         }
+      } catch {
+        // Endpoint not available, proceed without enforcement
       }
 
       // All checks passed — complete the task

@@ -5,7 +5,7 @@ export type TaskStatus = 'Backlog' | 'Todo' | 'InProgress' | 'Review' | 'Blocked
 export type TaskPriority = 'P1' | 'P2' | 'P3' | 'P4';
 export type TaskType = 'Feature' | 'Bug' | 'Refactor' | 'Docs' | 'Test' | 'Infra' | 'Research';
 export type TaskSource = 'Manual' | 'Claude';
-export type TestType = 'Unit' | 'Integration' | 'EndToEnd' | 'Manual';
+export type TestType = 'Unit' | 'Integration' | 'UI' | 'Manual';
 export type TestStatus = 'NotCreated' | 'Created' | 'Passing' | 'Failing' | 'Skipped';
 export type CommentSource = 'Manual' | 'Claude' | 'System';
 export type TestLevel = 'Smoke' | 'Comprehensive' | 'FullE2E';
@@ -98,7 +98,7 @@ export interface Task {
 	createdAt: string;
 	updatedAt: string;
 	labels?: Label[];
-	tests?: TestRecord[];
+	tests?: Test[];
 	testPlans?: TestPlan[];
 	attachments?: Attachment[];
 	comments?: Comment[];
@@ -109,21 +109,24 @@ export interface Task {
 	};
 }
 
-export interface TestRecord {
+export interface Test {
 	id: number;
-	taskId: number;
-	testType: TestType;
+	testPlanId: number;
+	orderIndex: number;
+	name: string;
+	description?: string;
+	type: TestType;
 	status: TestStatus;
-	testName?: string;
 	testFile?: string;
 	framework?: string;
 	lastRunAt?: string;
-	lastRunResult?: string;
 	lastRunOutput?: string;
 	totalRuns: number;
 	passedRuns: number;
 	failedRuns: number;
 	createdAt: string;
+	stepCount?: number;
+	steps?: TestStep[];
 }
 
 export interface Attachment {
@@ -200,10 +203,11 @@ export interface TestPlan {
 	requiredLevel: TestLevel;
 	status: TestPlanStatus;
 	source: TestPlanSource;
+	testCount?: number;
 	stepCount?: number;
 	createdAt: string;
 	updatedAt: string;
-	steps?: TestStep[];
+	tests?: Test[];
 	executions?: TestExecution[];
 	latestExecution?: {
 		id: number;
@@ -218,7 +222,7 @@ export interface TestPlan {
 
 export interface TestStep {
 	id: number;
-	testPlanId: number;
+	testId: number;
 	orderIndex: number;
 	stepType: TestStepType;
 	description: string;

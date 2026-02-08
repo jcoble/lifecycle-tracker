@@ -7,6 +7,6 @@ public enum TestType
 {
     Unit = 0,
     Integration = 1,
-    EndToEnd = 2,
+    UI = 2,
     Manual = 3
 }

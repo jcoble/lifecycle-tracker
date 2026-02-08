@@ -119,7 +119,7 @@ public static class TaskEndpoints
         {
             var task = await db.Tasks
                 .Include(t => t.TaskLabels).ThenInclude(tl => tl.Label)
-                .Include(t => t.Tests)
+                .Include(t => t.TestPlans).ThenInclude(tp => tp.Tests)
                 .Include(t => t.Attachments)
                 .Include(t => t.Comments.OrderByDescending(c => c.CreatedAt))
                 .FirstOrDefaultAsync(t => t.Id == id);
@@ -269,11 +269,11 @@ public static class TaskEndpoints
         RequiredTestLevel = t.RequiredTestLevel?.ToString(),
         t.CreatedAt, t.UpdatedAt,
         Labels = t.TaskLabels.Select(tl => new { tl.Label.Id, tl.Label.Name, tl.Label.Color }),
-        Tests = t.Tests.Select(tr => new
+        Tests = t.TestPlans.SelectMany(tp => tp.Tests).Select(test => new
         {
-            tr.Id, TestType = tr.TestType.ToString(), Status = tr.Status.ToString(),
-            tr.TestName, tr.TestFile, tr.Framework, tr.LastRunAt,
-            tr.TotalRuns, tr.PassedRuns, tr.FailedRuns
+            test.Id, TestType = test.Type.ToString(), Status = test.Status.ToString(),
+            test.Name, test.TestFile, test.Framework, test.LastRunAt,
+            test.TotalRuns, test.PassedRuns, test.FailedRuns, test.TestPlanId
         }),
         Attachments = t.Attachments.Select(a => new
         {

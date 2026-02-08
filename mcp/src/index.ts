@@ -3,7 +3,6 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { registerProjectTools } from './tools/project-tools.js';
 import { registerTaskTools } from './tools/task-tools.js';
 import { registerPhaseTools } from './tools/phase-tools.js';
-import { registerTestTools } from './tools/test-tools.js';
 import { registerContextTools } from './tools/context-tools.js';
 import { registerTeamTools } from './tools/team-tools.js';
 import { registerMilestoneTools } from './tools/milestone-tools.js';
@@ -17,7 +16,6 @@ const server = new McpServer({
 registerProjectTools(server);
 registerTaskTools(server);
 registerPhaseTools(server);
-registerTestTools(server);
 registerTestPlanTools(server);
 registerContextTools(server);
 registerTeamTools(server);

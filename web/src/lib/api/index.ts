@@ -2,7 +2,7 @@ export { projects } from './endpoints/projects';
 export { milestones } from './endpoints/milestones';
 export { phases } from './endpoints/phases';
 export { tasks } from './endpoints/tasks';
-export { tests } from './endpoints/tests';
+export { testPlans } from './endpoints/testPlans';
 export { attachments } from './endpoints/attachments';
 export { comments } from './endpoints/comments';
 export { labels } from './endpoints/labels';

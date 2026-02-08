@@ -90,7 +90,7 @@
 		{#if task.tests && task.tests.length > 0}
 			<div class="flex items-center gap-1">
 				{#each task.tests as test}
-					<TestStatusBadge testType={test.testType} status={test.status} />
+					<TestStatusBadge testType={test.type} status={test.status} />
 				{/each}
 			</div>
 		{/if}

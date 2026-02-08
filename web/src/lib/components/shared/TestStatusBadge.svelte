@@ -14,7 +14,7 @@
 	const typeLabels: Record<TestType, string> = {
 		Unit: 'U',
 		Integration: 'I',
-		EndToEnd: 'E2E',
+		UI: 'UI',
 		Manual: 'M',
 	};
 </script>
