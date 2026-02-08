@@ -40,7 +40,7 @@
 		{ key: 'unitTestCommand', label: 'Unit Test Command', placeholder: 'e.g., dotnet test --filter Category=Unit', icon: 'terminal', mono: true },
 		{ key: 'integrationTestCommand', label: 'Integration Test Command', placeholder: 'e.g., dotnet test --filter Category=Integration', icon: 'terminal', mono: true },
 		{ key: 'webTestTool', label: 'Web Test Tool', placeholder: 'e.g., agent-browser, playwright', icon: 'monitor' },
-		{ key: 'defaultTestLevel', label: 'Default Test Level', placeholder: 'Smoke | Functional | Comprehensive | FullE2E', icon: 'shield' },
+		{ key: 'defaultTestLevel', label: 'Default Test Level', placeholder: 'Smoke | Comprehensive | FullE2E', icon: 'shield' },
 		{ key: 'testAutonomyLevel', label: 'Test Autonomy', placeholder: 'Manual | SemiAuto | AutoCreate | FullAuto', icon: 'bot' },
 	] as const;
 

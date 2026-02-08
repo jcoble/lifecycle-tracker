@@ -52,7 +52,7 @@
 	const statuses: TaskStatus[] = ['Backlog', 'Todo', 'InProgress', 'Review', 'Blocked', 'Done', 'Cancelled'];
 	const priorities: TaskPriority[] = ['P1', 'P2', 'P3', 'P4'];
 	const types: TaskType[] = ['Feature', 'Bug', 'Refactor', 'Docs', 'Test', 'Infra', 'Research'];
-	const testLevels: (TestLevel | '')[] = ['', 'Smoke', 'Functional', 'Comprehensive', 'FullE2E'];
+	const testLevels: (TestLevel | '')[] = ['', 'Smoke', 'Comprehensive', 'FullE2E'];
 	// TestAutonomyLevel is now a project-level setting, not per-task
 
 	async function loadFullTask() {
@@ -244,9 +244,8 @@
 				>
 					<option value="">None</option>
 					<option value="Smoke">Smoke (~30s)</option>
-					<option value="Functional">Functional (~2-5m)</option>
-					<option value="Comprehensive">Comprehensive (~10-15m)</option>
-					<option value="FullE2E">Full E2E (~30m+)</option>
+					<option value="Comprehensive">Comprehensive (~5-10m)</option>
+					<option value="FullE2E">Full E2E (~15m+)</option>
 				</select>
 			</div>
 

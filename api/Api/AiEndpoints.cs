@@ -27,7 +27,7 @@ public static class AiEndpoints
                 var task = new LifecycleTask
                 {
                     ProjectId = req.ProjectId ?? 1,
-                    PhaseId = t.PhaseId,
+                    PhaseId = t.PhaseId ?? req.PhaseId,
                     Title = t.Title,
                     Description = t.Description,
                     Status = targetStatus,
@@ -400,11 +400,42 @@ public static class AiEndpoints
             });
         });
 
+        // Get active project settings (for MCP test enforcement)
+        group.MapGet("/settings", async (LifecycleDbContext db, int? projectId) =>
+        {
+            Project? project;
+            if (projectId.HasValue)
+                project = await db.Projects.FindAsync(projectId.Value);
+            else
+                project = await db.Projects.Where(p => p.Status == ProjectStatus.Active).FirstOrDefaultAsync();
+
+            if (project is null) return Results.NotFound();
+            var settings = TeamEndpoints.ParseSettings(project);
+            return Results.Ok(new { project.Id, Settings = settings });
+        });
+
+        // Get test records for a task (for MCP test enforcement)
+        group.MapGet("/tasks/{id:int}/tests", async (int id, LifecycleDbContext db) =>
+        {
+            var tests = await db.TestRecords
+                .Where(t => t.TaskId == id)
+                .Select(t => new
+                {
+                    t.Id, t.TaskId,
+                    TestType = t.TestType.ToString(),
+                    Status = t.Status.ToString(),
+                    t.TestName, t.TestFile,
+                    t.LastRunAt, t.LastRunResult
+                })
+                .ToListAsync();
+            return Results.Ok(tests);
+        });
+
         return app;
     }
 }
 
-public record BulkCreateTasksRequest(List<BulkTaskItem> Tasks, int? ProjectId = null);
+public record BulkCreateTasksRequest(List<BulkTaskItem> Tasks, int? ProjectId = null, int? PhaseId = null);
 public record BulkTaskItem(string Title, string? Description = null, int? PhaseId = null, TaskStatus? Status = null, TaskPriority? Priority = null, TaskType? Type = null, List<int>? LabelIds = null);
 
 public record PhaseBreakdownRequest(

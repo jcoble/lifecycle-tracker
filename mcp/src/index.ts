@@ -7,6 +7,7 @@ import { registerTestTools } from './tools/test-tools.js';
 import { registerContextTools } from './tools/context-tools.js';
 import { registerTeamTools } from './tools/team-tools.js';
 import { registerMilestoneTools } from './tools/milestone-tools.js';
+import { registerTestPlanTools } from './tools/test-plan-tools.js';
 
 const server = new McpServer({
   name: 'lifecycle',
@@ -17,6 +18,7 @@ registerProjectTools(server);
 registerTaskTools(server);
 registerPhaseTools(server);
 registerTestTools(server);
+registerTestPlanTools(server);
 registerContextTools(server);
 registerTeamTools(server);
 registerMilestoneTools(server);

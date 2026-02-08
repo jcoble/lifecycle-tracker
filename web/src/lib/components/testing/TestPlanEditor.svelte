@@ -15,7 +15,7 @@
 
 	let name = $state('');
 	let description = $state('');
-	let requiredLevel = $state<TestLevel>('Functional');
+	let requiredLevel = $state<TestLevel>('Smoke');
 	let steps = $state<Array<{
 		stepType: TestStepType;
 		description: string;
@@ -62,7 +62,7 @@
 	}
 
 	const stepTypes: TestStepType[] = ['Setup', 'Action', 'Assertion', 'Teardown'];
-	const levels: TestLevel[] = ['Smoke', 'Functional', 'Comprehensive', 'FullE2E'];
+	const levels: TestLevel[] = ['Smoke', 'Comprehensive', 'FullE2E'];
 </script>
 
 <div class="rounded-lg border border-border bg-surface p-4">

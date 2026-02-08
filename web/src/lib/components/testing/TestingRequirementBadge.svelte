@@ -14,9 +14,8 @@
 
 	const levelLabels: Record<string, string> = {
 		Smoke: 'L1',
-		Functional: 'L2',
-		Comprehensive: 'L3',
-		FullE2E: 'L4',
+		Comprehensive: 'L2',
+		FullE2E: 'L3',
 	};
 
 	let status = $derived.by(() => {
@@ -33,7 +32,7 @@
 	});
 
 	function levelOrder(level: TestLevel): number {
-		const order: Record<string, number> = { Smoke: 1, Functional: 2, Comprehensive: 3, FullE2E: 4 };
+		const order: Record<string, number> = { Smoke: 1, Comprehensive: 2, FullE2E: 3 };
 		return order[level] ?? 0;
 	}
 

@@ -6,7 +6,6 @@ namespace Lifecycle.Data.Enums;
 public enum TestLevel
 {
     Smoke = 1,
-    Functional = 2,
-    Comprehensive = 3,
-    FullE2E = 4
+    Comprehensive = 2,
+    FullE2E = 3
 }

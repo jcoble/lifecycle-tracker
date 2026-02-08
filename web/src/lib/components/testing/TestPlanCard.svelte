@@ -14,7 +14,6 @@
 
 	const levelColors: Record<string, string> = {
 		Smoke: 'bg-blue-500/10 text-blue-400',
-		Functional: 'bg-purple-500/10 text-purple-400',
 		Comprehensive: 'bg-orange-500/10 text-orange-400',
 		FullE2E: 'bg-red-500/10 text-red-400',
 	};
