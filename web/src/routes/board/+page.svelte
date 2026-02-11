@@ -3,6 +3,7 @@
 	import { createQuery, useQueryClient } from '@tanstack/svelte-query';
 	import { tasks as tasksApi } from '$lib/api/endpoints/tasks';
 	import { phases as phasesApi } from '$lib/api/endpoints/phases';
+	import { milestones as milestonesApi } from '$lib/api/endpoints/milestones';
 	import { labels as labelsApi } from '$lib/api/endpoints/labels';
 	import { getCurrentProjectId } from '$lib/stores/project.svelte';
 
@@ -13,9 +14,30 @@
 		queryFn: () => tasksApi.list({ projectId: String(getCurrentProjectId()) }),
 	}));
 
+	// Load milestones for the current project
+	const milestonesQuery = createQuery(() => ({
+		queryKey: ['milestones', getCurrentProjectId()],
+		queryFn: () => milestonesApi.list(getCurrentProjectId()),
+	}));
+
+	// Derive active milestones (InProgress first, then all)
+	let activeMilestones = $derived(
+		milestonesQuery.data?.filter(m => m.status === 'InProgress') ?? []
+	);
+	let allMilestones = $derived(milestonesQuery.data ?? []);
+
+	// Load phases for all active milestones (or all milestones if none active)
 	const phasesQuery = createQuery(() => ({
-		queryKey: ['phases', 'all', getCurrentProjectId()],
-		queryFn: () => phasesApi.list(getCurrentProjectId()),
+		queryKey: ['phases', 'board', allMilestones.map(m => m.id)],
+		queryFn: async () => {
+			const targets = allMilestones;
+			if (!targets.length) return [];
+			const results = await Promise.all(
+				targets.map(m => phasesApi.list(m.id))
+			);
+			return results.flat();
+		},
+		enabled: milestonesQuery.isSuccess && allMilestones.length > 0,
 	}));
 
 	const labelsQuery = createQuery(() => ({
@@ -45,6 +67,7 @@
 		<KanbanBoard
 			tasks={tasksQuery.data || []}
 			phases={phasesQuery.data || []}
+			milestones={allMilestones}
 			labels={labelsQuery.data || []}
 			onTaskUpdated={handleTaskUpdated}
 		/>

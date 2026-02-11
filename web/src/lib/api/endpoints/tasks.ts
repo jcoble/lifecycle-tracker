@@ -14,4 +14,8 @@ export const tasks = {
 		api.post<Task>(`/tasks/${id}/move`, { status, orderInColumn }),
 	reorder: (status: string, items: { id: number; order: number }[]) =>
 		api.patch('/tasks/reorder', { status, items }),
+	archiveCompleted: (data: { projectId?: number; olderThanDays?: number; completedPhasesOnly?: boolean }) =>
+		api.post<{ archivedCount: number }>('/tasks/archive-completed', data),
+	spawnTestAgent: (taskId: number) =>
+		api.post<{ message: string; taskId: number; logFile: string }>(`/tasks/${taskId}/spawn-test`, {}),
 };

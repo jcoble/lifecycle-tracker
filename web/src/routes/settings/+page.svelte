@@ -31,7 +31,7 @@
 	let editingSettings = $state(false);
 	let settingsFields = $state<ProjectSettings>({});
 
-	const settingsConfig = [
+	const settingsConfig: { key: keyof ProjectSettings; label: string; placeholder: string; icon: string; mono?: boolean }[] = [
 		{ key: 'language', label: 'Language', placeholder: 'e.g., C#, TypeScript, Python', icon: 'code' },
 		{ key: 'framework', label: 'Framework', placeholder: 'e.g., .NET 10, SvelteKit, Next.js', icon: 'box' },
 		{ key: 'repositoryRoot', label: 'Repository Root', placeholder: 'e.g., /Users/me/project', icon: 'folder', mono: true },
@@ -42,7 +42,7 @@
 		{ key: 'webTestTool', label: 'Web Test Tool', placeholder: 'e.g., agent-browser, playwright', icon: 'monitor' },
 		{ key: 'defaultTestLevel', label: 'Default Test Level', placeholder: 'Smoke | Comprehensive | FullE2E', icon: 'shield' },
 		{ key: 'testAutonomyLevel', label: 'Test Autonomy', placeholder: 'Manual | SemiAuto | AutoCreate | FullAuto', icon: 'bot' },
-	] as const;
+	];
 
 	function parseSettings(raw?: string): ProjectSettings {
 		if (!raw) return {};

@@ -1,50 +1,89 @@
 <script lang="ts">
-	import type { TaskPriority, TaskType, TaskSource, Phase, Label } from '$lib/types';
-	import { Search, X } from '@lucide/svelte';
+	import type { TaskPriority, TaskType, TaskSource, Phase, Label, Milestone } from '$lib/types';
+	import { Archive, Search, X } from '@lucide/svelte';
 
 	let {
 		search = '',
+		milestone = '',
 		phase = '',
 		priority = '',
 		type = '',
 		source = '',
 		label = '',
+		sortBy = 'board',
+		sortDir = 'asc',
 		phases = [] as Phase[],
+		milestones = [] as Milestone[],
 		labels = [] as Label[],
 		onchange,
+		onArchiveCompleted,
 	}: {
 		search?: string;
+		milestone?: string;
 		phase?: string;
 		priority?: string;
 		type?: string;
 		source?: string;
 		label?: string;
+		sortBy?: string;
+		sortDir?: 'asc' | 'desc';
 		phases?: Phase[];
+		milestones?: Milestone[];
 		labels?: Label[];
 		onchange?: (filters: Record<string, string>) => void;
+		onArchiveCompleted?: () => Promise<void> | void;
 	} = $props();
 
+	let archiveBusy = $state(false);
+
 	function emit() {
-		onchange?.({ search, phase, priority, type, source, label });
+		onchange?.({ search, milestone, phase, priority, type, source, label, sortBy, sortDir });
+	}
+
+	function handleMilestoneChange() {
+		phase = ''; // Reset phase when milestone changes
+		emit();
 	}
 
 	function clearAll() {
 		search = '';
+		milestone = '';
 		phase = '';
 		priority = '';
 		type = '';
 		source = '';
 		label = '';
+		sortBy = 'board';
+		sortDir = 'asc';
 		emit();
 	}
 
+	async function handleArchiveCompleted() {
+		if (archiveBusy) return;
+		archiveBusy = true;
+		try {
+			await onArchiveCompleted?.();
+		} finally {
+			archiveBusy = false;
+		}
+	}
+
 	let hasFilters = $derived(
-		!!search || !!phase || !!priority || !!type || !!source || !!label
+		!!search || !!milestone || !!phase || !!priority || !!type || !!source || !!label || sortBy !== 'board' || sortDir !== 'asc'
 	);
 
 	const priorities: TaskPriority[] = ['P1', 'P2', 'P3', 'P4'];
 	const types: TaskType[] = ['Feature', 'Bug', 'Refactor', 'Docs', 'Test', 'Infra', 'Research'];
 	const sources: TaskSource[] = ['Manual', 'Claude'];
+	const sortFields = [
+		{ value: 'board', label: 'Board Order' },
+		{ value: 'id', label: 'Task Number' },
+		{ value: 'title', label: 'Title' },
+		{ value: 'description', label: 'Description' },
+		{ value: 'priority', label: 'Priority' },
+		{ value: 'createdAt', label: 'Created' },
+		{ value: 'updatedAt', label: 'Updated' },
+	];
 </script>
 
 <div class="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2">
@@ -59,6 +98,22 @@
 			class="h-8 w-48 rounded-md border border-border bg-surface pl-8 pr-3 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
 		/>
 	</div>
+
+	<!-- Milestone -->
+	{#if milestones.length > 0}
+		<select
+			bind:value={milestone}
+			onchange={handleMilestoneChange}
+			class="h-8 rounded-md border border-border bg-surface px-2 text-sm text-text-secondary focus:border-accent focus:outline-none"
+		>
+			<option value="">All Milestones</option>
+			{#each milestones as m}
+				<option value={String(m.id)}>
+					{m.name}{m.status === 'InProgress' ? ' *' : ''}
+				</option>
+			{/each}
+		</select>
+	{/if}
 
 	<!-- Phase -->
 	{#if phases.length > 0}
@@ -123,6 +178,37 @@
 			{/each}
 		</select>
 	{/if}
+
+	<!-- Sort -->
+	<select
+		bind:value={sortBy}
+		onchange={emit}
+		class="h-8 rounded-md border border-border bg-surface px-2 text-sm text-text-secondary focus:border-accent focus:outline-none"
+	>
+		{#each sortFields as field}
+			<option value={field.value}>{field.label}</option>
+		{/each}
+	</select>
+
+	<select
+		bind:value={sortDir}
+		onchange={emit}
+		disabled={sortBy === 'board'}
+		class="h-8 rounded-md border border-border bg-surface px-2 text-sm text-text-secondary focus:border-accent focus:outline-none disabled:opacity-50"
+	>
+		<option value="asc">Ascending</option>
+		<option value="desc">Descending</option>
+	</select>
+
+	<button
+		onclick={handleArchiveCompleted}
+		disabled={archiveBusy}
+		class="flex h-8 items-center gap-1 rounded-md border border-border px-2 text-xs text-text-secondary transition-colors hover:bg-surface-hover disabled:opacity-50"
+		title="Archive done tasks in completed phases"
+	>
+		<Archive class="h-3.5 w-3.5" />
+		{archiveBusy ? 'Archiving...' : 'Archive Completed'}
+	</button>
 
 	<!-- Clear -->
 	{#if hasFilters}

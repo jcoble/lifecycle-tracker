@@ -13,7 +13,7 @@
 	import ClipboardDropZone from './ClipboardDropZone.svelte';
 	import { formatRelative, formatDate } from '$lib/utils/date';
 	import { buildCommitUrl, buildBranchUrl } from '$lib/utils/git';
-	import { X, Send, Paperclip, GitBranch, MessageSquare, Trash2, FlaskConical } from '@lucide/svelte';
+	import { X, Send, Paperclip, GitBranch, MessageSquare, Trash2, FlaskConical, Play } from '@lucide/svelte';
 
 	let {
 		task,
@@ -47,8 +47,26 @@
 	let taskTestPlans = $state<TestPlan[]>(task.testPlans || []);
 	let showTestPlanEditor = $state(false);
 	let lightboxUrl = $state<string | null>(null);
+	let spawnBusy = $state(false);
+	let spawnResult = $state<string | null>(null);
 
-	const statuses: TaskStatus[] = ['Backlog', 'Todo', 'InProgress', 'Review', 'Blocked', 'Done', 'Cancelled'];
+	const VALID_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
+		Backlog: ['Todo', 'Cancelled'],
+		Todo: ['InProgress', 'Backlog', 'Cancelled'],
+		InProgress: ['Review', 'Blocked', 'Cancelled'],
+		Review: ['Done', 'InProgress', 'Blocked', 'Cancelled'],
+		Blocked: ['InProgress', 'Review', 'Cancelled'],
+		Done: ['InProgress'],
+		Cancelled: ['Backlog'],
+	};
+
+	let availableStatuses = $derived.by(() => {
+		const current = task.status as TaskStatus;
+		const valid = VALID_TRANSITIONS[current] || [];
+		// Always include current status at top
+		return [current, ...valid.filter(s => s !== current)];
+	});
+
 	const priorities: TaskPriority[] = ['P1', 'P2', 'P3', 'P4'];
 	const types: TaskType[] = ['Feature', 'Bug', 'Refactor', 'Docs', 'Test', 'Infra', 'Research'];
 	const testLevels: (TestLevel | '')[] = ['', 'Smoke', 'Comprehensive', 'FullE2E'];
@@ -109,6 +127,22 @@
 		taskAttachments = [...taskAttachments, attachment];
 	}
 
+	async function handleRunTests() {
+		if (spawnBusy) return;
+		spawnBusy = true;
+		spawnResult = null;
+		try {
+			const result = await tasksApi.spawnTestAgent(task.id);
+			spawnResult = result.message;
+			setTimeout(() => { spawnResult = null; }, 5000);
+		} catch (err: unknown) {
+			spawnResult = err instanceof Error ? err.message : 'Failed to spawn test runner';
+			setTimeout(() => { spawnResult = null; }, 5000);
+		} finally {
+			spawnBusy = false;
+		}
+	}
+
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
 			if (lightboxUrl) { lightboxUrl = null; return; }
@@ -139,6 +173,14 @@
 		</div>
 		<div class="flex items-center gap-1">
 			<button
+				onclick={handleRunTests}
+				disabled={spawnBusy}
+				class="rounded p-1 text-text-tertiary transition-colors hover:bg-green-500/10 hover:text-green-500 disabled:opacity-50"
+				title="Run tests"
+			>
+				<Play class="h-4 w-4" />
+			</button>
+			<button
 				onclick={deleteTask}
 				class="rounded p-1 text-text-tertiary transition-colors hover:bg-danger/10 hover:text-danger"
 				title="Delete task"
@@ -153,6 +195,13 @@
 			</button>
 		</div>
 	</div>
+
+	<!-- Spawn result banner -->
+	{#if spawnResult}
+		<div class="border-b border-accent/30 bg-accent/10 px-4 py-2 text-xs text-accent">
+			{spawnResult}
+		</div>
+	{/if}
 
 	<!-- Body -->
 	<div class="flex-1 overflow-y-auto px-4 py-4 space-y-5">
@@ -185,7 +234,7 @@
 					onchange={(e) => updateField('status', e.currentTarget.value)}
 					class="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-sm text-text-primary focus:border-accent focus:outline-none"
 				>
-					{#each statuses as s}
+					{#each availableStatuses as s}
 						<option value={s}>{s === 'InProgress' ? 'In Progress' : s}</option>
 					{/each}
 				</select>
@@ -246,6 +295,20 @@
 					<option value="Comprehensive">Comprehensive (~5-10m)</option>
 					<option value="FullE2E">Full E2E (~15m+)</option>
 				</select>
+			</div>
+
+			<!-- Skip UI Testing -->
+			<div class="col-span-2">
+				<label class="flex items-center gap-2 cursor-pointer">
+					<input
+						type="checkbox"
+						checked={task.skipUiTesting || false}
+						onchange={(e) => updateField('skipUiTesting', e.currentTarget.checked)}
+						class="h-4 w-4 rounded border-border bg-surface text-accent focus:ring-accent"
+					/>
+					<span class="text-sm text-text-primary">Skip UI Testing</span>
+				</label>
+				<p class="mt-0.5 ml-6 text-xs text-text-tertiary">Only the project owner should enable this</p>
 			</div>
 
 			</div>
