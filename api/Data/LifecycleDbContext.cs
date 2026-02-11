@@ -71,12 +71,14 @@ public class LifecycleDbContext : DbContext
         {
             entity.HasKey(e => e.Id);
             entity.Property(e => e.Title).IsRequired().HasMaxLength(200);
+            entity.Property(e => e.IsArchived).HasDefaultValue(false);
             entity.Property(e => e.GitCommitSha).HasMaxLength(40);
             entity.Property(e => e.GitBranch).HasMaxLength(200);
             entity.Property(e => e.PullRequestUrl).HasMaxLength(500);
             entity.Property(e => e.ConversationRef).HasMaxLength(500);
             entity.HasIndex(e => e.ProjectId);
             entity.HasIndex(e => e.PhaseId);
+            entity.HasIndex(e => e.IsArchived);
             entity.HasIndex(e => new { e.Status, e.OrderInColumn });
             entity.HasOne(e => e.Project)
                 .WithMany()
@@ -86,6 +88,11 @@ public class LifecycleDbContext : DbContext
                 .WithMany(p => p.Tasks)
                 .HasForeignKey(e => e.PhaseId)
                 .OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(e => e.SourceTask)
+                .WithMany()
+                .HasForeignKey(e => e.SourceTaskId)
+                .OnDelete(DeleteBehavior.SetNull);
+            entity.HasIndex(e => e.SourceTaskId);
         });
 
         modelBuilder.Entity<TestPlan>(entity =>
@@ -244,6 +251,7 @@ public class LifecycleDbContext : DbContext
             entity.Property(e => e.SessionId).IsRequired().HasMaxLength(200);
             entity.Property(e => e.Status).IsRequired().HasMaxLength(50);
             entity.Property(e => e.CurrentActivity).HasMaxLength(500);
+            entity.Property(e => e.LatestPlanFileName).HasMaxLength(200);
             entity.HasIndex(e => e.TeamMemberId);
             entity.HasOne(e => e.TeamMember)
                 .WithMany(tm => tm.Sessions)

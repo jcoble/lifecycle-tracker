@@ -427,11 +427,14 @@ public static class TaskEndpoints
                 "4) Complete the test execution and report all results back via the lifecycle API. " +
                 "Follow the system prompt for test patterns and conventions.";
 
-            // Spawn claude in background
+            var logFile = $"/tmp/test-agent-{taskId}.log";
+            var pidFile = $"/tmp/test-agent-{taskId}.pid";
+
+            // Spawn claude in background with stream-json for real-time log output
             var psi = new ProcessStartInfo
             {
                 FileName = "bash",
-                Arguments = $"-c \"claude -p \\\"{prompt}\\\" --system-prompt file:{promptFile} --dangerously-skip-permissions --model sonnet --add-dir {repoRoot} >> /tmp/test-agent-spawns.log 2>&1 &\"",
+                Arguments = $"-c \"claude -p \\\"{prompt}\\\" --system-prompt file:{promptFile} --dangerously-skip-permissions --model sonnet --output-format stream-json --add-dir {repoRoot} >> {logFile} 2>&1 & echo $! > {pidFile}\"",
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
@@ -441,6 +444,7 @@ public static class TaskEndpoints
             try
             {
                 var process = Process.Start(psi);
+                process?.WaitForExit(5000); // Wait for bash to fork and write PID
                 await sse.BroadcastAsync("agent:spawned", new { TaskId = taskId, Type = "test-runner" });
 
                 return Results.Ok(new
@@ -448,7 +452,7 @@ public static class TaskEndpoints
                     Message = $"Test runner spawned for task #{taskId}",
                     TaskId = taskId,
                     TaskType = taskType,
-                    LogFile = "/tmp/test-agent-spawns.log"
+                    LogFile = logFile
                 });
             }
             catch (Exception ex)
@@ -457,7 +461,258 @@ public static class TaskEndpoints
             }
         });
 
+        // Read agent log output for a task (polling endpoint, parses stream-json)
+        group.MapGet("/{taskId:int}/agent-log", (int taskId, int? offset) =>
+        {
+            var logFile = $"/tmp/test-agent-{taskId}.log";
+            if (!File.Exists(logFile))
+                return Results.Ok(new { lines = Array.Empty<string>(), totalLines = 0, running = false, sessionId = (string?)null });
+
+            var allLines = File.ReadAllLines(logFile);
+            var skip = Math.Min(offset ?? 0, allLines.Length);
+            var rawNewLines = allLines.Skip(skip).ToArray();
+            var parsedLines = ParseStreamJsonLines(rawNewLines);
+
+            // Extract session_id from first few lines of log
+            string? sessionId = null;
+            foreach (var rawLine in allLines.Take(20))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(rawLine);
+                    if (doc.RootElement.TryGetProperty("session_id", out var sid))
+                    { sessionId = sid.GetString(); break; }
+                }
+                catch { }
+            }
+
+            // Check if agent is still running via PID file
+            var pidFile = $"/tmp/test-agent-{taskId}.pid";
+            var running = false;
+            if (File.Exists(pidFile))
+            {
+                var pidText = File.ReadAllText(pidFile).Trim();
+                if (int.TryParse(pidText, out var pid))
+                {
+                    try { Process.GetProcessById(pid); running = true; }
+                    catch { /* process exited — clean up PID file */ try { File.Delete(pidFile); } catch { } }
+                }
+            }
+
+            return Results.Ok(new { lines = parsedLines, totalLines = allLines.Length, running, sessionId });
+        });
+
+        // Stop a running test agent for a task
+        group.MapPost("/{taskId:int}/stop-agent", async (int taskId, SseService sse) =>
+        {
+            var pidFile = $"/tmp/test-agent-{taskId}.pid";
+            if (!File.Exists(pidFile))
+                return Results.NotFound(new { error = "No agent PID found for this task" });
+
+            var pidText = File.ReadAllText(pidFile).Trim();
+            if (int.TryParse(pidText, out var pid))
+            {
+                try
+                {
+                    var proc = Process.GetProcessById(pid);
+                    proc.Kill(entireProcessTree: true);
+                }
+                catch { /* process already exited */ }
+            }
+
+            try { File.Delete(pidFile); } catch { }
+
+            // Append stop message to log
+            var logFile = $"/tmp/test-agent-{taskId}.log";
+            try { File.AppendAllText(logFile, $"\n[{DateTime.UtcNow:o}] Agent stopped by user\n"); } catch { }
+
+            await sse.BroadcastAsync("agent:stopped", new { TaskId = taskId });
+
+            return Results.Ok(new { message = $"Agent for task #{taskId} stopped" });
+        });
+
+        // Send a message to a finished agent (resume session with user feedback)
+        group.MapPost("/{taskId:int}/message-agent", async (int taskId, MessageAgentRequest req, LifecycleDbContext db, SseService sse) =>
+        {
+            if (string.IsNullOrWhiteSpace(req.Message))
+                return Results.BadRequest(new { Error = "Message is required" });
+
+            // Kill any running agent first so we can resume cleanly
+            var pidFile = $"/tmp/test-agent-{taskId}.pid";
+            if (File.Exists(pidFile))
+            {
+                var pidText = File.ReadAllText(pidFile).Trim();
+                if (int.TryParse(pidText, out var existingPid))
+                {
+                    try { var proc = Process.GetProcessById(existingPid); proc.Kill(entireProcessTree: true); }
+                    catch { /* already exited */ }
+                }
+                try { File.Delete(pidFile); } catch { }
+                // Brief pause to let process exit
+                await Task.Delay(500);
+            }
+
+            // Find session_id from log file
+            var logFile = $"/tmp/test-agent-{taskId}.log";
+            if (!File.Exists(logFile))
+                return Results.BadRequest(new { Error = "No agent log found for this task. Run the agent first." });
+
+            string? sessionId = null;
+            var logLines = File.ReadAllLines(logFile);
+            foreach (var rawLine in logLines.Take(20))
+            {
+                try
+                {
+                    using var doc = JsonDocument.Parse(rawLine);
+                    if (doc.RootElement.TryGetProperty("session_id", out var sid))
+                    { sessionId = sid.GetString(); break; }
+                }
+                catch { }
+            }
+
+            if (string.IsNullOrEmpty(sessionId))
+                return Results.BadRequest(new { Error = "Could not find session_id in agent log. The agent may not have produced stream-json output." });
+
+            // Write user message to a temp file to avoid shell injection
+            var msgFile = $"/tmp/test-agent-{taskId}.msg";
+            await File.WriteAllTextAsync(msgFile, req.Message);
+
+            // Inject a visible marker into the log file
+            var userMsgJson = JsonSerializer.Serialize(new { type = "user_message", content = req.Message });
+            await File.AppendAllTextAsync(logFile, userMsgJson + "\n");
+
+            // Get project settings for repository root
+            var task = await db.Tasks.FindAsync(taskId);
+            var project = await db.Projects
+                .FirstOrDefaultAsync(p => p.Id == (task != null && task.ProjectId != 0 ? task.ProjectId : 1));
+            var settings = new Dictionary<string, string>();
+            if (!string.IsNullOrEmpty(project?.Settings))
+            {
+                try { settings = JsonSerializer.Deserialize<Dictionary<string, string>>(project.Settings) ?? settings; }
+                catch { }
+            }
+            var repoRoot = settings.GetValueOrDefault("repositoryRoot", "");
+
+            // Spawn: claude --resume <sessionId> with message from file
+            var addDir = !string.IsNullOrEmpty(repoRoot) && Directory.Exists(repoRoot) ? $"--add-dir {repoRoot}" : "";
+            var psi = new ProcessStartInfo
+            {
+                FileName = "bash",
+                Arguments = $"-c \"claude --resume {sessionId} -p \\\"$(cat {msgFile})\\\" --dangerously-skip-permissions --output-format stream-json {addDir} >> {logFile} 2>&1 & echo $! > {pidFile}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+
+            try
+            {
+                var process = Process.Start(psi);
+                process?.WaitForExit(5000);
+                await sse.BroadcastAsync("agent:resumed", new { TaskId = taskId });
+
+                return Results.Ok(new { message = $"Agent resumed for task #{taskId} with your instructions", taskId, sessionId });
+            }
+            catch (Exception ex)
+            {
+                return Results.Problem($"Failed to resume agent: {ex.Message}");
+            }
+        });
+
         return app;
+    }
+
+    /// <summary>
+    /// Parses stream-json lines from claude CLI into human-readable log entries.
+    /// Handles both stream-json format and plain text (e.g. timestamps from hook scripts).
+    /// </summary>
+    private static string[] ParseStreamJsonLines(string[] rawLines)
+    {
+        var result = new List<string>();
+        foreach (var line in rawLines)
+        {
+            if (string.IsNullOrWhiteSpace(line)) continue;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(line);
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("type", out var typeEl)) { result.Add(line); continue; }
+                var type = typeEl.GetString();
+
+                if (type == "assistant" && root.TryGetProperty("message", out var msg)
+                    && msg.TryGetProperty("content", out var content)
+                    && content.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var block in content.EnumerateArray())
+                    {
+                        var btype = block.TryGetProperty("type", out var bt) ? bt.GetString() : "";
+                        if (btype == "text" && block.TryGetProperty("text", out var text))
+                        {
+                            var t = text.GetString()?.Trim();
+                            if (!string.IsNullOrEmpty(t))
+                            {
+                                // Split multi-line text into separate log lines
+                                foreach (var tl in t.Split('\n'))
+                                {
+                                    var trimmed = tl.TrimEnd();
+                                    if (!string.IsNullOrEmpty(trimmed))
+                                        result.Add(trimmed.Length > 300 ? trimmed[..300] + "..." : trimmed);
+                                }
+                            }
+                        }
+                        else if (btype == "tool_use" && block.TryGetProperty("name", out var name))
+                        {
+                            var toolName = name.GetString() ?? "";
+                            var summary = "";
+                            if (block.TryGetProperty("input", out var input))
+                            {
+                                if (input.TryGetProperty("command", out var cmd))
+                                {
+                                    var c = cmd.GetString() ?? "";
+                                    summary = c.Length > 120 ? $": {c[..120]}..." : $": {c}";
+                                }
+                                else if (input.TryGetProperty("activity", out var act))
+                                    summary = $": {act.GetString()}";
+                                else if (input.TryGetProperty("file_path", out var fp))
+                                    summary = $": {fp.GetString()}";
+                                else if (input.TryGetProperty("pattern", out var pat))
+                                    summary = $": {pat.GetString()}";
+                                else if (input.TryGetProperty("url", out var url))
+                                    summary = $": {url.GetString()}";
+                                else if (input.TryGetProperty("taskId", out var tid))
+                                    summary = $": task #{tid}";
+                                else if (input.TryGetProperty("status", out var st))
+                                    summary = $": {st.GetString()}";
+                            }
+                            result.Add($"» {toolName}{summary}");
+                        }
+                        // Skip tool_result blocks — too verbose
+                    }
+                }
+                else if (type == "user_message")
+                {
+                    var userMsg = root.TryGetProperty("content", out var um) ? um.GetString() : "";
+                    result.Add($"[You] {userMsg}");
+                }
+                else if (type == "result")
+                {
+                    var cost = root.TryGetProperty("cost_usd", out var c) ? c.GetDouble() : 0;
+                    var turns = root.TryGetProperty("num_turns", out var nt) ? nt.GetInt32() : 0;
+                    var isError = root.TryGetProperty("is_error", out var ie) && ie.GetBoolean();
+                    result.Add(isError
+                        ? $"Agent failed after {turns} turns (${cost:F4})"
+                        : $"Agent finished ({turns} turns, ${cost:F4})");
+                }
+                // Skip system/init and user (tool_result) messages
+            }
+            catch (JsonException)
+            {
+                // Not JSON — plain text from hook script or stderr
+                result.Add(line);
+            }
+        }
+        return result.ToArray();
     }
 
     private static object MapToListDto(LifecycleTask t)
@@ -555,6 +810,7 @@ public record MoveTaskRequest(TaskStatus Status, int OrderInColumn);
 public record ReorderRequest(TaskStatus Status, List<ReorderItem> Items);
 public record ReorderItem(int Id, int Order);
 public record ArchiveCompletedTasksRequest(int? ProjectId = null, int? OlderThanDays = null, bool CompletedPhasesOnly = true);
+public record MessageAgentRequest(string Message);
 
 public static class TaskTransitionValidator
 {

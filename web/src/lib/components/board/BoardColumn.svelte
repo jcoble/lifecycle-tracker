@@ -8,6 +8,7 @@
 		status,
 		title,
 		tasks = [],
+		dragEnabled = true,
 		onCardClick,
 		onDndConsider,
 		onDndFinalize,
@@ -16,6 +17,7 @@
 		status: TaskStatus;
 		title: string;
 		tasks: Task[];
+		dragEnabled?: boolean;
 		onCardClick?: (task: Task) => void;
 		onDndConsider?: (status: TaskStatus, e: CustomEvent) => void;
 		onDndFinalize?: (status: TaskStatus, e: CustomEvent) => void;
@@ -50,7 +52,7 @@
 	};
 </script>
 
-<div class="flex h-full w-72 shrink-0 flex-col rounded-lg bg-surface/50">
+<div class="flex h-full w-64 sm:w-72 shrink-0 flex-col rounded-lg bg-surface/50">
 	<!-- Header -->
 	<div class="flex items-center justify-between px-3 py-2.5">
 		<div class="flex items-center gap-2">
@@ -85,8 +87,9 @@
 
 	<!-- Cards -->
 	<div
-		class="flex-1 space-y-2 overflow-y-auto px-2 pb-2"
-		use:dndzone={{ items: tasks, type: 'task', dropTargetStyle: {} }}
+		class="flex-1 space-y-2 overflow-y-auto overflow-x-hidden px-2 pb-2"
+		data-column-scroll="true"
+		use:dndzone={{ items: tasks, type: 'task', dropTargetStyle: {}, dragDisabled: !dragEnabled }}
 		onconsider={(e) => onDndConsider?.(status, e)}
 		onfinalize={(e) => onDndFinalize?.(status, e)}
 	>

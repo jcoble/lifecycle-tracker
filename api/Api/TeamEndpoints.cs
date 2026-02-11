@@ -140,7 +140,15 @@ public static class TeamEndpoints
                 session.CurrentActivity = null;
             }
 
-            member.Status = "Idle";
+            // Ephemeral (auto-registered) members get deleted on shutdown
+            if (!member.IsPersistent)
+            {
+                db.TeamMembers.Remove(member);
+            }
+            else
+            {
+                member.Status = "Idle";
+            }
             await db.SaveChangesAsync();
 
             await sse.BroadcastAsync("agent:shutdown", new { member.Id, member.AgentName });
@@ -168,6 +176,13 @@ public static class TeamEndpoints
             if (req.TokensUsed.HasValue)
                 activeSession.TokensUsed = req.TokensUsed;
 
+            if (req.PlanContent is not null)
+            {
+                activeSession.LatestPlanContent = req.PlanContent;
+                activeSession.LatestPlanFileName = req.PlanFileName;
+                activeSession.LatestPlanUpdatedAt = DateTime.UtcNow;
+            }
+
             member.LastActiveAt = DateTime.UtcNow;
             await db.SaveChangesAsync();
 
@@ -180,6 +195,16 @@ public static class TeamEndpoints
                     member.Role,
                     Activity = req.Activity,
                     Timestamp = DateTime.UtcNow
+                });
+            }
+
+            if (req.PlanContent is not null)
+            {
+                await sse.BroadcastAsync("agent:plan_updated", new
+                {
+                    TeamMemberId = member.Id,
+                    member.AgentName,
+                    PlanFileName = req.PlanFileName
                 });
             }
 
@@ -446,7 +471,183 @@ public static class TeamEndpoints
             return Results.Ok(new { project.Id, Settings = req.Settings });
         });
 
+        // Cleanup stale agent sessions
+        group.MapPost("/cleanup-stale", async (LifecycleDbContext db, SseService sse) =>
+        {
+            var cleaned = await CleanupStaleSessions(db, sse);
+            return Results.Ok(new { CleanedCount = cleaned.Count, Agents = cleaned });
+        });
+
+        // Monitor all agents for a project (auto-cleans stale sessions on each poll)
+        group.MapGet("/monitor", async (int? projectId, LifecycleDbContext db, SseService sse) =>
+        {
+            await CleanupStaleSessions(db, sse);
+
+            var pid = projectId ?? 1;
+            var members = await db.TeamMembers
+                .Include(tm => tm.Sessions.Where(s => s.Status == "Active").OrderByDescending(s => s.SpawnedAt).Take(1))
+                .Include(tm => tm.Assignments.Where(a => a.Status != "Completed" && a.Status != "Abandoned"))
+                    .ThenInclude(a => a.Task)
+                .Where(tm => tm.ProjectId == pid)
+                .ToListAsync();
+
+            var now = DateTime.UtcNow;
+            var staleThreshold = now.AddMinutes(-5);
+
+            var agents = members.Select(m =>
+            {
+                var session = m.Sessions.FirstOrDefault();
+                var assignment = m.Assignments.FirstOrDefault();
+                var lastHb = session?.LastHeartbeatAt;
+                return new
+                {
+                    m.Id, m.AgentName, m.Role, m.ModelName, m.Status,
+                    CurrentActivity = session?.CurrentActivity,
+                    CurrentTask = assignment?.Task is null ? null : new
+                    {
+                        Id = assignment.Task.Id,
+                        Title = assignment.Task.Title,
+                        Status = assignment.Task.Status.ToString()
+                    },
+                    SessionStarted = session?.SpawnedAt,
+                    LastHeartbeat = lastHb,
+                    TokensUsed = session?.TokensUsed,
+                    LatestPlan = session?.LatestPlanContent is null ? null : new
+                    {
+                        FileName = session.LatestPlanFileName,
+                        UpdatedAt = session.LatestPlanUpdatedAt
+                    },
+                    IsStale = m.Status == "Active" && lastHb.HasValue && lastHb < staleThreshold
+                };
+            }).ToList();
+
+            return Results.Ok(new { Agents = agents });
+        });
+
+        // Auto-register: find-or-create TeamMember + spawn session in one call
+        // Supports multiple concurrent sessions by using sessionId to find existing registrations
+        group.MapPost("/auto-register", async (AutoRegisterRequest req, LifecycleDbContext db, SseService sse) =>
+        {
+            var pid = req.ProjectId ?? 1;
+            var sessionId = req.SessionId ?? Guid.NewGuid().ToString();
+
+            // Check if this exact session already registered (idempotent re-register)
+            var existingSession = await db.AgentSessions
+                .Include(s => s.TeamMember)
+                .FirstOrDefaultAsync(s => s.SessionId == sessionId && s.Status == "Active");
+
+            if (existingSession is not null)
+            {
+                existingSession.LastHeartbeatAt = DateTime.UtcNow;
+                existingSession.TeamMember.LastActiveAt = DateTime.UtcNow;
+                await db.SaveChangesAsync();
+                return Results.Ok(new
+                {
+                    TeamMemberId = existingSession.TeamMemberId,
+                    SessionId = existingSession.SessionId,
+                    existingSession.TeamMember.AgentName,
+                    existingSession.TeamMember.Role,
+                    IsNew = false
+                });
+            }
+
+            // Count active sessions for this base agent name to generate unique display name
+            var baseName = req.AgentName;
+            var activeCount = await db.TeamMembers
+                .Where(tm => tm.ProjectId == pid && tm.Status == "Active"
+                    && (tm.AgentName == baseName || tm.AgentName.StartsWith(baseName + "-")))
+                .CountAsync();
+
+            var displayName = activeCount == 0 ? baseName : $"{baseName}-{activeCount + 1}";
+
+            // Create a new TeamMember for this session
+            var member = new TeamMember
+            {
+                ProjectId = pid,
+                Role = req.Role ?? "ClaudeCode",
+                AgentName = displayName,
+                ModelName = req.ModelName ?? "unknown",
+                IsPersistent = false, // auto-registered sessions are ephemeral
+                Status = "Active",
+                CreatedAt = DateTime.UtcNow,
+                LastActiveAt = DateTime.UtcNow
+            };
+            db.TeamMembers.Add(member);
+            await db.SaveChangesAsync();
+
+            // Spawn session
+            var session = new AgentSession
+            {
+                TeamMemberId = member.Id,
+                SessionId = sessionId,
+                Status = "Active",
+                SpawnedAt = DateTime.UtcNow,
+                LastHeartbeatAt = DateTime.UtcNow
+            };
+            db.AgentSessions.Add(session);
+            await db.SaveChangesAsync();
+
+            await sse.BroadcastAsync("agent:spawned", new { member.Id, member.AgentName, member.Role });
+
+            return Results.Ok(new
+            {
+                TeamMemberId = member.Id,
+                SessionId = session.SessionId,
+                member.AgentName,
+                member.Role,
+                IsNew = true
+            });
+        });
+
+        // Get agent's latest plan
+        group.MapGet("/{id:int}/plan", async (int id, LifecycleDbContext db) =>
+        {
+            var session = await db.AgentSessions
+                .Where(s => s.TeamMemberId == id && s.Status == "Active")
+                .OrderByDescending(s => s.SpawnedAt)
+                .FirstOrDefaultAsync();
+
+            if (session?.LatestPlanContent is null)
+                return Results.Ok(new { PlanFileName = (string?)null, PlanContent = (string?)null, UpdatedAt = (DateTime?)null });
+
+            return Results.Ok(new
+            {
+                session.LatestPlanFileName,
+                session.LatestPlanContent,
+                UpdatedAt = session.LatestPlanUpdatedAt
+            });
+        });
+
         return app;
+    }
+
+    /// <summary>Cleanup stale sessions: 2min for ephemeral, 10min for persistent</summary>
+    private static async Task<List<object>> CleanupStaleSessions(LifecycleDbContext db, SseService sse)
+    {
+        var ephemeralCutoff = DateTime.UtcNow.AddMinutes(-2);
+        var persistentCutoff = DateTime.UtcNow.AddMinutes(-10);
+
+        var staleSessions = await db.AgentSessions
+            .Include(s => s.TeamMember)
+            .Where(s => s.Status == "Active" && (
+                (!s.TeamMember.IsPersistent && s.LastHeartbeatAt < ephemeralCutoff) ||
+                (s.TeamMember.IsPersistent && s.LastHeartbeatAt < persistentCutoff)))
+            .ToListAsync();
+
+        var cleaned = new List<object>();
+        foreach (var session in staleSessions)
+        {
+            session.Status = "Terminated";
+            session.CompletedAt = DateTime.UtcNow;
+            cleaned.Add(new { session.TeamMember.Id, session.TeamMember.AgentName });
+            if (!session.TeamMember.IsPersistent)
+                db.TeamMembers.Remove(session.TeamMember);
+            else
+                session.TeamMember.Status = "Idle";
+            await sse.BroadcastAsync("agent:shutdown", new { session.TeamMember.Id, session.TeamMember.AgentName });
+        }
+        if (cleaned.Count > 0) await db.SaveChangesAsync();
+        return cleaned;
     }
 
     internal static string ResolvePromptVariables(string? template, Dictionary<string, string> settings)
@@ -541,7 +742,7 @@ public record UpdateTeamMemberRequest(
 
 public record SpawnSessionRequest(string? SessionId = null);
 public record ShutdownRequest(int? TokensUsed = null);
-public record HeartbeatRequest(string? Activity = null, int? TokensUsed = null);
+public record HeartbeatRequest(string? Activity = null, int? TokensUsed = null, string? PlanFileName = null, string? PlanContent = null);
 
 public record AssignTaskRequest(int? TeamMemberId = null, string? AssignedBy = null);
 public record ClaimTaskRequest(string AgentName);
@@ -556,3 +757,10 @@ public record ResolveEscalationRequest(
     string? Resolution = null);
 
 public record ProjectSettingsRequest(Dictionary<string, string> Settings);
+
+public record AutoRegisterRequest(
+    string AgentName,
+    int? ProjectId = null,
+    string? Role = null,
+    string? ModelName = null,
+    string? SessionId = null);

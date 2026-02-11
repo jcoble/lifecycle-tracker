@@ -1,6 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { api, getActiveProjectId } from '../api-client.js';
+import { setLastActivity } from '../index.js';
 
 const AGENT_NAME = process.env.LIFECYCLE_AGENT_NAME || '';
 let _resolvedTeamMemberId: number | null = null;
@@ -130,14 +131,17 @@ export function registerTeamTools(server: McpServer) {
         .describe('What you are currently doing (e.g., "Investigating auth bug in UserService.cs")'),
       tokensUsed: z.number().optional()
         .describe('Running token count for this session'),
+      planFileName: z.string().optional().describe('Plan file name if agent has an active plan'),
+      planContent: z.string().optional().describe('Full plan markdown content'),
     },
-    async ({ teamMemberId, activity, tokensUsed }) => {
+    async ({ teamMemberId, activity, tokensUsed, planFileName, planContent }) => {
+      setLastActivity(activity);
       const memberId = teamMemberId ?? await getMyTeamMemberId();
       if (!memberId) {
         return { content: [{ type: 'text' as const,
           text: 'Error: teamMemberId required. Set LIFECYCLE_AGENT_NAME env var for auto-detection, or pass teamMemberId explicitly.' }] };
       }
-      const result = await api.post(`/teams/${memberId}/heartbeat`, { activity, tokensUsed });
+      const result = await api.post(`/teams/${memberId}/heartbeat`, { activity, tokensUsed, planFileName, planContent });
       return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );

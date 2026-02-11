@@ -3,6 +3,7 @@ using System;
 using Lifecycle.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Lifecycle.Migrations
 {
     [DbContext(typeof(LifecycleDbContext))]
-    partial class LifecycleDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260208144528_AddSkipUiTesting")]
+    partial class AddSkipUiTesting
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.1");
@@ -117,16 +120,6 @@ namespace Lifecycle.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime?>("LastHeartbeatAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("LatestPlanContent")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("LatestPlanFileName")
-                        .HasMaxLength(200)
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime?>("LatestPlanUpdatedAt")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("SessionId")
@@ -276,9 +269,6 @@ namespace Lifecycle.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
-                    b.Property<DateTime?>("ArchivedAt")
-                        .HasColumnType("TEXT");
-
                     b.Property<DateTime?>("CompletedAt")
                         .HasColumnType("TEXT");
 
@@ -302,11 +292,6 @@ namespace Lifecycle.Migrations
                     b.Property<string>("GitCommitSha")
                         .HasMaxLength(40)
                         .HasColumnType("TEXT");
-
-                    b.Property<bool>("IsArchived")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER")
-                        .HasDefaultValue(false);
 
                     b.Property<int>("OrderInColumn")
                         .HasColumnType("INTEGER");
@@ -333,9 +318,6 @@ namespace Lifecycle.Migrations
                     b.Property<int>("Source")
                         .HasColumnType("INTEGER");
 
-                    b.Property<int?>("SourceTaskId")
-                        .HasColumnType("INTEGER");
-
                     b.Property<DateTime?>("StartedAt")
                         .HasColumnType("TEXT");
 
@@ -358,13 +340,9 @@ namespace Lifecycle.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("IsArchived");
-
                     b.HasIndex("PhaseId");
 
                     b.HasIndex("ProjectId");
-
-                    b.HasIndex("SourceTaskId");
 
                     b.HasIndex("Status", "OrderInColumn");
 
@@ -943,16 +921,9 @@ namespace Lifecycle.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("Lifecycle.Data.Entities.LifecycleTask", "SourceTask")
-                        .WithMany()
-                        .HasForeignKey("SourceTaskId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.Navigation("Phase");
 
                     b.Navigation("Project");
-
-                    b.Navigation("SourceTask");
                 });
 
             modelBuilder.Entity("Lifecycle.Data.Entities.Milestone", b =>

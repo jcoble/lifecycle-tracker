@@ -18,4 +18,15 @@ export const tasks = {
 		api.post<{ archivedCount: number }>('/tasks/archive-completed', data),
 	spawnTestAgent: (taskId: number) =>
 		api.post<{ message: string; taskId: number; logFile: string }>(`/tasks/${taskId}/spawn-test`, {}),
+	getAgentLog: (taskId: number, offset = 0) =>
+		api.get<{ lines: string[]; totalLines: number; running: boolean; sessionId: string | null }>(
+			`/tasks/${taskId}/agent-log?offset=${offset}`
+		),
+	messageAgent: (taskId: number, message: string) =>
+		api.post<{ message: string; taskId: number; sessionId: string }>(
+			`/tasks/${taskId}/message-agent`,
+			{ message }
+		),
+	stopAgent: (taskId: number) =>
+		api.post<{ message: string }>(`/tasks/${taskId}/stop-agent`, {}),
 };

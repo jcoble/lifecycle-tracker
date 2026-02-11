@@ -16,10 +16,17 @@ public static class AiEndpoints
         // Bulk create tasks
         group.MapPost("/tasks/bulk-create", async (BulkCreateTasksRequest req, LifecycleDbContext db, SseService sse) =>
         {
+            var protectedTypes = new HashSet<TaskType> { TaskType.Feature, TaskType.Bug, TaskType.Refactor };
             var created = new List<object>();
             foreach (var t in req.Tasks)
             {
                 var targetStatus = t.Status ?? TaskStatus.Backlog;
+                var taskType = t.Type ?? TaskType.Feature;
+
+                // Block creating Feature/Bug/Refactor tasks directly in Done or Review
+                if ((targetStatus == TaskStatus.Done || targetStatus == TaskStatus.Review) && protectedTypes.Contains(taskType))
+                    return Results.BadRequest(new { Error = $"Cannot create {taskType} task '{t.Title}' directly in {targetStatus} status. Tasks must follow the workflow: Backlog → Todo → InProgress → Review → Done." });
+
                 var maxOrder = await db.Tasks
                     .Where(x => x.Status == targetStatus)
                     .MaxAsync(x => (int?)x.OrderInColumn) ?? -1;
@@ -133,6 +140,16 @@ public static class AiEndpoints
                 .FirstOrDefaultAsync(t => t.Id == id);
             if (task is null) return Results.NotFound();
 
+            var (isValid, reason) = TaskTransitionValidator.IsValid(task.Status, req.Status);
+            if (!isValid) return Results.BadRequest(new { Error = reason });
+
+            // API-level completion enforcement — cannot be bypassed
+            if (req.Status == TaskStatus.Done)
+            {
+                var (canComplete, doneReason) = await TaskTransitionValidator.CanCompleteDone(task, db);
+                if (!canComplete) return Results.BadRequest(new { Error = doneReason });
+            }
+
             var oldStatus = task.Status;
             task.Status = req.Status;
             task.UpdatedAt = DateTime.UtcNow;
@@ -199,8 +216,8 @@ public static class AiEndpoints
         group.MapGet("/context", async (LifecycleDbContext db, int? projectId) =>
         {
             var query = db.Projects
-                .Include(p => p.Milestones).ThenInclude(m => m.Phases).ThenInclude(ph => ph.Tasks).ThenInclude(t => t.TestPlans).ThenInclude(tp => tp.Tests)
-                .Include(p => p.Milestones).ThenInclude(m => m.Phases).ThenInclude(ph => ph.Tasks).ThenInclude(t => t.TaskLabels).ThenInclude(tl => tl.Label)
+                .Include(p => p.Milestones).ThenInclude(m => m.Phases).ThenInclude(ph => ph.Tasks.Where(t => !t.IsArchived)).ThenInclude(t => t.TestPlans).ThenInclude(tp => tp.Tests)
+                .Include(p => p.Milestones).ThenInclude(m => m.Phases).ThenInclude(ph => ph.Tasks.Where(t => !t.IsArchived)).ThenInclude(t => t.TaskLabels).ThenInclude(tl => tl.Label)
                 .Include(p => p.Labels)
                 .AsQueryable();
 
@@ -370,6 +387,399 @@ public static class AiEndpoints
             return Results.Ok(tests);
         });
 
+        // Generate a test task from a source task (with optional test plan + tests + steps)
+        group.MapPost("/tasks/{id:int}/generate-test-task", async (int id, GenerateTestTaskRequest req, LifecycleDbContext db, SseService sse) =>
+        {
+            var sourceTask = await db.Tasks.Include(t => t.Phase).ThenInclude(p => p!.Milestone).FirstOrDefaultAsync(t => t.Id == id);
+            if (sourceTask is null) return Results.NotFound("Source task not found");
+
+            var maxOrder = await db.Tasks
+                .Where(x => x.Status == TaskStatus.Todo)
+                .MaxAsync(x => (int?)x.OrderInColumn) ?? -1;
+
+            var testTask = new LifecycleTask
+            {
+                ProjectId = sourceTask.ProjectId,
+                PhaseId = sourceTask.PhaseId,
+                Title = $"Test: {sourceTask.Title}",
+                Description = $"UI test task auto-generated from task #{id}",
+                Status = TaskStatus.Todo,
+                Priority = TaskPriority.P2,
+                Type = TaskType.Test,
+                Source = TaskSource.Claude,
+                SourceTaskId = id,
+                OrderInColumn = maxOrder + 1,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+            db.Tasks.Add(testTask);
+            await db.SaveChangesAsync();
+
+            // Create test plan with nested tests + steps
+            TestPlan? testPlan = null;
+            if (req.Tests is { Count: > 0 })
+            {
+                testPlan = new TestPlan
+                {
+                    TaskId = testTask.Id,
+                    Name = req.TestPlanName ?? $"Test plan for: {sourceTask.Title}",
+                    RequiredLevel = Enum.TryParse<TestLevel>(req.TestLevel, out var level) ? level : TestLevel.Smoke,
+                    Status = TestPlanStatus.Draft,
+                    Source = TestPlanSource.AI_Generated,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+
+                for (int ti = 0; ti < req.Tests.Count; ti++)
+                {
+                    var t = req.Tests[ti];
+                    var test = new Test
+                    {
+                        OrderIndex = ti,
+                        Name = t.Name,
+                        Description = t.Description,
+                        Type = Enum.TryParse<TestType>(t.Type, out var tt) ? tt : TestType.UI,
+                        Status = TestStatus.Created,
+                        Framework = t.Framework,
+                        CreatedAt = DateTime.UtcNow
+                    };
+
+                    if (t.Steps is { Count: > 0 })
+                    {
+                        for (int si = 0; si < t.Steps.Count; si++)
+                        {
+                            var s = t.Steps[si];
+                            test.Steps.Add(new TestStep
+                            {
+                                OrderIndex = si,
+                                StepType = Enum.TryParse<TestStepType>(s.StepType, out var st) ? st : TestStepType.Action,
+                                Description = s.Description,
+                                ExpectedResult = s.ExpectedResult,
+                                AutomationCommand = s.AutomationCommand,
+                                CreatedAt = DateTime.UtcNow
+                            });
+                        }
+                    }
+                    testPlan.Tests.Add(test);
+                }
+                db.TestPlans.Add(testPlan);
+                await db.SaveChangesAsync();
+            }
+
+            // Log activity
+            var projectId = sourceTask.Phase?.Milestone?.ProjectId ?? sourceTask.ProjectId;
+            await ActivityHelper.LogActivity(db, projectId, ActivityType.TestTaskGenerated,
+                TaskSource.Claude, "Task", testTask.Id, "TestTaskGenerated",
+                $"Test task '{testTask.Title}' auto-generated from task #{id}");
+
+            await sse.BroadcastAsync("task:created", new { testTask.Id, testTask.Title, Status = testTask.Status.ToString(), SourceTaskId = id });
+
+            return Results.Created($"/api/tasks/{testTask.Id}", new
+            {
+                TestTaskId = testTask.Id,
+                TestPlanId = testPlan?.Id,
+                Title = testTask.Title
+            });
+        });
+
+        // Request review - move to Review + optional test task generation
+        group.MapPost("/tasks/{id:int}/request-review", async (int id, RequestReviewRequest req, LifecycleDbContext db, SseService sse) =>
+        {
+            var task = await db.Tasks.Include(t => t.Phase).ThenInclude(p => p!.Milestone)
+                .FirstOrDefaultAsync(t => t.Id == id);
+            if (task is null) return Results.NotFound();
+
+            // Must be InProgress or Blocked
+            if (task.Status != TaskStatus.InProgress && task.Status != TaskStatus.Blocked)
+                return Results.BadRequest(new { Error = $"Task must be InProgress or Blocked to request review. Current: {task.Status}" });
+
+            var (isValid, reason) = TaskTransitionValidator.IsValid(task.Status, TaskStatus.Review);
+            if (!isValid) return Results.BadRequest(new { Error = reason });
+
+            var oldStatus = task.Status;
+            task.Status = TaskStatus.Review;
+            task.UpdatedAt = DateTime.UtcNow;
+            if (req.GitCommitSha is not null) task.GitCommitSha = req.GitCommitSha;
+            if (req.GitBranch is not null) task.GitBranch = req.GitBranch;
+            if (req.PullRequestUrl is not null) task.PullRequestUrl = req.PullRequestUrl;
+            await db.SaveChangesAsync();
+
+            // Always create a linked test task for Feature/Bug/Refactor tasks
+            // If testPlan is provided, use it; otherwise create a placeholder
+            object? testTaskInfo = null;
+            var requiresTestTask = task.Type == TaskType.Feature || task.Type == TaskType.Bug || task.Type == TaskType.Refactor;
+            if (requiresTestTask && !task.SkipUiTesting)
+            {
+                var maxOrder = await db.Tasks
+                    .Where(x => x.Status == TaskStatus.Todo)
+                    .MaxAsync(x => (int?)x.OrderInColumn) ?? -1;
+                var testTask = new LifecycleTask
+                {
+                    ProjectId = task.ProjectId,
+                    PhaseId = task.PhaseId,
+                    Title = $"Test: {task.Title}",
+                    Description = $"UI test task auto-generated from task #{id}",
+                    Status = TaskStatus.Todo,
+                    Priority = TaskPriority.P2,
+                    Type = TaskType.Test,
+                    Source = TaskSource.Claude,
+                    SourceTaskId = id,
+                    OrderInColumn = maxOrder + 1,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                db.Tasks.Add(testTask);
+                await db.SaveChangesAsync();
+
+                TestPlan? testPlan = null;
+                if (req.TestPlan?.Tests is { Count: > 0 })
+                {
+                    testPlan = new TestPlan
+                    {
+                        TaskId = testTask.Id,
+                        Name = req.TestPlan.TestPlanName ?? $"Test plan for: {task.Title}",
+                        RequiredLevel = Enum.TryParse<TestLevel>(req.TestPlan.TestLevel, out var level) ? level : TestLevel.Smoke,
+                        Status = TestPlanStatus.Draft,
+                        Source = TestPlanSource.AI_Generated,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    };
+                    for (int ti = 0; ti < req.TestPlan.Tests.Count; ti++)
+                    {
+                        var t = req.TestPlan.Tests[ti];
+                        var test = new Test
+                        {
+                            OrderIndex = ti,
+                            Name = t.Name,
+                            Description = t.Description,
+                            Type = Enum.TryParse<TestType>(t.Type, out var tt) ? tt : TestType.UI,
+                            Status = TestStatus.Created,
+                            Framework = t.Framework,
+                            CreatedAt = DateTime.UtcNow
+                        };
+                        if (t.Steps is { Count: > 0 })
+                        {
+                            for (int si = 0; si < t.Steps.Count; si++)
+                            {
+                                var s = t.Steps[si];
+                                test.Steps.Add(new TestStep
+                                {
+                                    OrderIndex = si,
+                                    StepType = Enum.TryParse<TestStepType>(s.StepType, out var st) ? st : TestStepType.Action,
+                                    Description = s.Description,
+                                    ExpectedResult = s.ExpectedResult,
+                                    AutomationCommand = s.AutomationCommand,
+                                    CreatedAt = DateTime.UtcNow
+                                });
+                            }
+                        }
+                        testPlan.Tests.Add(test);
+                    }
+                    db.TestPlans.Add(testPlan);
+                    await db.SaveChangesAsync();
+                }
+                else
+                {
+                    // Create a placeholder smoke test plan so the test agent has something to work with
+                    testPlan = new TestPlan
+                    {
+                        TaskId = testTask.Id,
+                        Name = $"Smoke test: {task.Title}",
+                        RequiredLevel = TestLevel.Smoke,
+                        Status = TestPlanStatus.Draft,
+                        Source = TestPlanSource.AI_Generated,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    };
+                    var smokeTest = new Test
+                    {
+                        OrderIndex = 0,
+                        Name = $"Verify: {task.Title}",
+                        Description = $"Smoke test auto-generated for task #{id}. Verify the feature works as described.",
+                        Type = TestType.UI,
+                        Status = TestStatus.Created,
+                        CreatedAt = DateTime.UtcNow
+                    };
+                    smokeTest.Steps.Add(new TestStep
+                    {
+                        OrderIndex = 0,
+                        StepType = TestStepType.Action,
+                        Description = $"Verify the changes from task #{id} ({task.Title}) work correctly in the UI",
+                        ExpectedResult = "Feature works as expected with no visual or functional regressions",
+                        CreatedAt = DateTime.UtcNow
+                    });
+                    testPlan.Tests.Add(smokeTest);
+                    db.TestPlans.Add(testPlan);
+                    await db.SaveChangesAsync();
+                }
+
+                testTaskInfo = new { TestTaskId = testTask.Id, TestPlanId = testPlan?.Id, Title = testTask.Title };
+            }
+            else if (req.TestPlan is not null && !requiresTestTask)
+            {
+                // Non-required type but testPlan provided — still create it
+                var maxOrder = await db.Tasks
+                    .Where(x => x.Status == TaskStatus.Todo)
+                    .MaxAsync(x => (int?)x.OrderInColumn) ?? -1;
+                var testTask = new LifecycleTask
+                {
+                    ProjectId = task.ProjectId,
+                    PhaseId = task.PhaseId,
+                    Title = $"Test: {task.Title}",
+                    Description = $"UI test task auto-generated from task #{id}",
+                    Status = TaskStatus.Todo,
+                    Priority = TaskPriority.P2,
+                    Type = TaskType.Test,
+                    Source = TaskSource.Claude,
+                    SourceTaskId = id,
+                    OrderInColumn = maxOrder + 1,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                db.Tasks.Add(testTask);
+                await db.SaveChangesAsync();
+                testTaskInfo = new { TestTaskId = testTask.Id, TestPlanId = (int?)null, Title = testTask.Title };
+            }
+
+            // Create backend test plan on the SOURCE task (not the linked test task)
+            int? backendTestPlanId = null;
+            var backendTestCount = 0;
+            if (req.BackendTests is { Count: > 0 })
+            {
+                var backendPlan = new TestPlan
+                {
+                    TaskId = task.Id,
+                    Name = $"Backend tests: {task.Title}",
+                    RequiredLevel = TestLevel.Smoke,
+                    Status = TestPlanStatus.Draft,
+                    Source = TestPlanSource.AI_Generated,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                for (int i = 0; i < req.BackendTests.Count; i++)
+                {
+                    var bt = req.BackendTests[i];
+                    backendPlan.Tests.Add(new Test
+                    {
+                        OrderIndex = i,
+                        Name = bt.Name,
+                        TestFile = bt.TestFile,
+                        Framework = bt.Framework ?? "xUnit",
+                        Type = bt.Type == "Integration" ? TestType.Integration : TestType.Unit,
+                        Status = TestStatus.Created,
+                        CreatedAt = DateTime.UtcNow
+                    });
+                }
+                db.TestPlans.Add(backendPlan);
+                await db.SaveChangesAsync();
+                backendTestPlanId = backendPlan.Id;
+                backendTestCount = req.BackendTests.Count;
+            }
+
+            // Log activity
+            if (task.Phase?.Milestone is not null)
+            {
+                await ActivityHelper.LogActivity(db, task.Phase.Milestone.ProjectId,
+                    ActivityType.TaskMoved, TaskSource.Claude, "Task", task.Id, "RequestedReview",
+                    $"Task '{task.Title}' submitted for review ({oldStatus} -> Review)");
+            }
+
+            await sse.BroadcastAsync("task:moved", new { task.Id, OldStatus = oldStatus.ToString(), NewStatus = "Review" });
+
+            // Find triggered agents for Review status
+            int? projectId = task.Phase?.Milestone?.ProjectId;
+            object[]? triggeredAgents = null;
+            if (projectId.HasValue)
+            {
+                var project = await db.Projects.FindAsync(projectId.Value);
+                var settings = project is not null ? TeamEndpoints.ParseSettings(project) : new Dictionary<string, string>();
+                var members = await db.TeamMembers
+                    .Where(tm => tm.ProjectId == projectId.Value && tm.TriggerStatuses != null)
+                    .ToListAsync();
+                triggeredAgents = members
+                    .Where(tm => tm.TriggerStatuses != null && tm.TriggerStatuses.Contains("\"Review\""))
+                    .Select(tm => (object)new
+                    {
+                        tm.Id, tm.AgentName, tm.Role, tm.ModelName,
+                        tm.SpawnPromptTemplate,
+                        ResolvedPrompt = TeamEndpoints.ResolvePromptVariables(tm.SpawnPromptTemplate, settings),
+                        tm.TriggerStatuses
+                    })
+                    .ToArray();
+            }
+
+            return Results.Ok(new
+            {
+                task.Id, task.Title, Status = task.Status.ToString(),
+                TestTask = testTaskInfo,
+                BackendTestPlanId = backendTestPlanId,
+                BackendTestCount = backendTestCount,
+                TriggeredAgents = triggeredAgents ?? Array.Empty<object>()
+            });
+        });
+
+        // Get linked test tasks for a source task
+        group.MapGet("/tasks/{id:int}/linked-test-tasks", async (int id, LifecycleDbContext db) =>
+        {
+            var linkedTests = await db.Tasks
+                .Where(t => t.SourceTaskId == id && t.Type == TaskType.Test)
+                .Select(t => new
+                {
+                    t.Id, t.Title, Status = t.Status.ToString(),
+                    Type = t.Type.ToString(), t.SourceTaskId,
+                    t.CreatedAt, t.CompletedAt
+                })
+                .ToListAsync();
+            return Results.Ok(linkedTests);
+        });
+
+        // Report test failure - add comment and move source task back to InProgress
+        group.MapPost("/tasks/{id:int}/report-test-failure", async (int id, ReportTestFailureRequest req, LifecycleDbContext db, SseService sse) =>
+        {
+            var sourceTask = await db.Tasks.Include(t => t.Phase).ThenInclude(p => p!.Milestone)
+                .FirstOrDefaultAsync(t => t.Id == id);
+            if (sourceTask is null) return Results.NotFound("Source task not found");
+
+            // Add failure comment
+            var comment = new Comment
+            {
+                TaskId = id,
+                Content = $"Test Failure Report:\n\n{req.FailureDescription}",
+                Source = CommentSource.System,
+                Author = "Test Agent",
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            };
+            db.Comments.Add(comment);
+
+            // Move source task back to InProgress if it's in Review
+            var oldStatus = sourceTask.Status;
+            if (sourceTask.Status == TaskStatus.Review)
+            {
+                sourceTask.Status = TaskStatus.InProgress;
+                sourceTask.UpdatedAt = DateTime.UtcNow;
+            }
+
+            await db.SaveChangesAsync();
+
+            // Log activity
+            if (sourceTask.Phase?.Milestone is not null)
+            {
+                await ActivityHelper.LogActivity(db, sourceTask.Phase.Milestone.ProjectId,
+                    ActivityType.TaskMoved, TaskSource.Claude, "Task", sourceTask.Id, "TestFailure",
+                    $"Task '{sourceTask.Title}' returned to InProgress due to test failure");
+            }
+
+            await sse.BroadcastAsync("task:moved", new { sourceTask.Id, OldStatus = oldStatus.ToString(), NewStatus = sourceTask.Status.ToString() });
+
+            return Results.Ok(new
+            {
+                sourceTask.Id, sourceTask.Title, Status = sourceTask.Status.ToString(),
+                CommentId = comment.Id,
+                Message = "Task returned to InProgress with failure report"
+            });
+        });
+
         return app;
     }
 }
@@ -391,3 +801,34 @@ public record TaskTransitionRequest(TaskStatus Status, string? GitCommitSha = nu
 
 
 public record PasteAttachmentRequest(int TaskId, string Base64Data, string ContentType, string? OriginalFileName = null, int? Width = null, int? Height = null);
+
+public record GenerateTestTaskRequest(
+    string? TestPlanName = null,
+    string? TestLevel = null,
+    List<GenerateTestRequest>? Tests = null);
+public record GenerateTestRequest(
+    string Name,
+    string? Description = null,
+    string? Type = null,
+    string? Framework = null,
+    List<GenerateTestStepRequest>? Steps = null);
+public record GenerateTestStepRequest(
+    string Description,
+    string? ExpectedResult = null,
+    string? StepType = null,
+    string? AutomationCommand = null);
+
+public record RequestReviewRequest(
+    string? GitCommitSha = null,
+    string? GitBranch = null,
+    string? PullRequestUrl = null,
+    GenerateTestTaskRequest? TestPlan = null,
+    List<BackendTestEntry>? BackendTests = null);
+
+public record BackendTestEntry(
+    string Name,
+    string TestFile,
+    string? Type = null,
+    string? Framework = null);
+
+public record ReportTestFailureRequest(string FailureDescription, int? TestTaskId = null);

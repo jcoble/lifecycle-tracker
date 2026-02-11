@@ -13,11 +13,13 @@
 		Users,
 		PanelLeftClose,
 		PanelLeftOpen,
-		Zap
+		Zap,
+		Activity
 	} from '@lucide/svelte';
 	import { matchShortcut } from '$lib/shortcuts';
 	import ShortcutsHelp from '$lib/components/shared/ShortcutsHelp.svelte';
 	import { agentActivityMap } from '$lib/stores/agentActivity';
+	import { markTestAgentActive, markTestAgentStopped } from '$lib/stores/testAgents';
 	import type { TeamMember } from '$lib/types';
 	import ProjectSelector from '$lib/components/shared/ProjectSelector.svelte';
 	import { getCurrentProjectId } from '$lib/stores/project.svelte';
@@ -44,6 +46,7 @@
 		{ href: '/milestones', label: 'Milestones', icon: Target },
 		{ href: '/metrics', label: 'Metrics', icon: BarChart3 },
 		{ href: '/team', label: 'Team', icon: Users },
+		{ href: '/monitor', label: 'Monitor', icon: Activity },
 		{ href: '/settings', label: 'Settings', icon: Settings },
 	];
 
@@ -87,6 +90,12 @@
 						taskTitle: null,
 						sessionSpawnedAt: m.currentSession.spawnedAt,
 						lastHeartbeat: m.lastActiveAt || m.currentSession.spawnedAt,
+						latestPlanFileName: null,
+						latestPlanUpdatedAt: null,
+						hasPlan: false,
+						isStale: false,
+						modelName: m.modelName || null,
+						tokensUsed: null,
 					});
 				}
 			}
@@ -126,21 +135,43 @@
 		// Agent activity SSE events
 		eventSource.addEventListener('agent:spawned', (e) => {
 			const data = JSON.parse(e.data);
+			// Test agent spawned via spawn-test endpoint (has TaskId)
+			if (data.TaskId) {
+				markTestAgentActive(data.TaskId);
+			}
 			agentActivityMap.update((map) => {
-				map.set(data.id || data.teamMemberId, {
-					teamMemberId: data.id || data.teamMemberId,
-					agentName: data.agentName,
-					role: data.role,
-					status: 'active',
-					currentActivity: null,
-					taskId: null,
-					taskTitle: null,
-					sessionSpawnedAt: new Date().toISOString(),
-					lastHeartbeat: new Date().toISOString(),
-				});
+				if (data.id || data.teamMemberId) {
+					map.set(data.id || data.teamMemberId, {
+						teamMemberId: data.id || data.teamMemberId,
+						agentName: data.agentName,
+						role: data.role,
+						status: 'active',
+						currentActivity: null,
+						taskId: null,
+						taskTitle: null,
+						sessionSpawnedAt: new Date().toISOString(),
+						lastHeartbeat: new Date().toISOString(),
+						latestPlanFileName: null,
+						latestPlanUpdatedAt: null,
+						hasPlan: false,
+						isStale: false,
+						modelName: null,
+						tokensUsed: null,
+					});
+				}
 				return new Map(map);
 			});
 			queryClient.invalidateQueries({ queryKey: ['team'] });
+		});
+
+		eventSource.addEventListener('agent:stopped', (e) => {
+			const data = JSON.parse(e.data);
+			if (data.TaskId) markTestAgentStopped(data.TaskId);
+		});
+
+		eventSource.addEventListener('agent:resumed', (e) => {
+			const data = JSON.parse(e.data);
+			if (data.TaskId) markTestAgentActive(data.TaskId);
 		});
 
 		eventSource.addEventListener('agent:shutdown', (e) => {
@@ -160,6 +191,19 @@
 					entry.currentActivity = data.activity;
 					entry.lastHeartbeat = data.timestamp || new Date().toISOString();
 					entry.status = 'active';
+				}
+				return new Map(map);
+			});
+		});
+
+		eventSource.addEventListener('agent:plan_updated', (e) => {
+			const data = JSON.parse(e.data);
+			agentActivityMap.update((map) => {
+				const entry = map.get(data.teamMemberId);
+				if (entry) {
+					entry.latestPlanFileName = data.planFileName;
+					entry.latestPlanUpdatedAt = new Date().toISOString();
+					entry.hasPlan = true;
 				}
 				return new Map(map);
 			});

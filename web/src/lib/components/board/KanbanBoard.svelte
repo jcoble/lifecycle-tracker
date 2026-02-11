@@ -46,10 +46,17 @@
 	let filteredTasks = $derived.by(() => {
 		let result = tasks;
 		if (filters.search) {
-			const s = filters.search.toLowerCase();
-			result = result.filter(
-				(t) => t.title.toLowerCase().includes(s) || t.description?.toLowerCase().includes(s)
-			);
+			const s = filters.search.trim().toLowerCase();
+			// Support #123 or plain number search by task ID
+			const idMatch = s.match(/^#?(\d+)$/);
+			if (idMatch) {
+				const searchId = Number(idMatch[1]);
+				result = result.filter((t) => t.id === searchId);
+			} else {
+				result = result.filter(
+					(t) => t.title.toLowerCase().includes(s) || t.description?.toLowerCase().includes(s)
+				);
+			}
 		}
 		if (filters.milestone) {
 			const milestonePhaseIds = new Set(filteredPhases.map(p => p.id));
@@ -244,7 +251,7 @@
 
 	<!-- Board -->
 	<div
-		class="flex flex-1 gap-4 overflow-x-auto overflow-y-hidden p-4"
+		class="flex flex-1 gap-3 sm:gap-4 overflow-x-auto overflow-y-hidden p-2 sm:p-4 -webkit-overflow-scrolling-touch"
 		bind:this={boardScrollEl}
 		onwheel={handleBoardWheel}
 	>

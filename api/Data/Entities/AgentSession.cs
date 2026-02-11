@@ -11,5 +11,8 @@ public class AgentSession
     public int? TokensUsed { get; set; }
     public string? CurrentActivity { get; set; }
     public DateTime? LastHeartbeatAt { get; set; }
+    public string? LatestPlanFileName { get; set; }
+    public string? LatestPlanContent { get; set; }
+    public DateTime? LatestPlanUpdatedAt { get; set; }
     public TeamMember TeamMember { get; set; } = null!;
 }

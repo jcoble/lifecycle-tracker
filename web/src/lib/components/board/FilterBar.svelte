@@ -86,16 +86,16 @@
 	];
 </script>
 
-<div class="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2">
+<div class="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 sm:px-4 overflow-x-auto">
 	<!-- Search -->
-	<div class="relative">
+	<div class="relative min-w-0 flex-shrink-0">
 		<Search class="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-tertiary" />
 		<input
 			type="text"
 			bind:value={search}
 			oninput={emit}
-			placeholder="Search tasks..."
-			class="h-8 w-48 rounded-md border border-border bg-surface pl-8 pr-3 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+			placeholder="Search or #task..."
+			class="h-8 w-40 sm:w-48 rounded-md border border-border bg-surface pl-8 pr-3 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
 		/>
 	</div>
 

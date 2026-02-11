@@ -326,15 +326,56 @@ public static class TestPlanEndpoints
                 : TestPlanStatus.Failing;
             exec.TestPlan.UpdatedAt = DateTime.UtcNow;
 
+            // Update individual test statuses based on their step results
+            var tests = await db.Tests
+                .Where(t => t.TestPlanId == exec.TestPlanId)
+                .ToListAsync();
+            var stepResults = await db.TestStepResults
+                .Where(r => r.TestExecutionId == exec.Id)
+                .ToListAsync();
+            foreach (var test in tests)
+            {
+                var testStepIds = await db.TestSteps
+                    .Where(s => s.TestId == test.Id)
+                    .Select(s => s.Id)
+                    .ToListAsync();
+                var results = stepResults.Where(r => testStepIds.Contains(r.TestStepId)).ToList();
+                if (results.Count == 0) continue;
+                test.Status = results.All(r => r.Status == TestStepStatus.Passed)
+                    ? TestStatus.Passing
+                    : TestStatus.Failing;
+                test.LastRunAt = DateTime.UtcNow;
+                test.TotalRuns++;
+                if (test.Status == TestStatus.Passing) test.PassedRuns++;
+                else test.FailedRuns++;
+            }
+
             await db.SaveChangesAsync();
+
+            // Resolve source task ID from the test plan's task
+            var testPlanTask = await db.Tasks.FirstOrDefaultAsync(t => t.Id == exec.TestPlan.TaskId);
+            int? sourceTaskId = testPlanTask?.SourceTaskId;
 
             await sse.BroadcastAsync("test:updated", new { ExecutionId = id, PlanId = exec.TestPlanId, exec.TestPlan.TaskId, Status = req.Status.ToString() });
 
-            return Results.Ok(MapExecutionToDto(exec));
+            var guidance = req.Status == TestExecutionStatus.Passed
+                ? sourceTaskId.HasValue ? $"All tests passed. The source task #{sourceTaskId} can now be completed via complete_task." : "All tests passed."
+                : sourceTaskId.HasValue ? $"Tests failed. Use report_test_failure on task #{sourceTaskId} to send it back for rework." : "Tests failed.";
+
+            return Results.Ok(new
+            {
+                Id = exec.Id, TestPlanId = exec.TestPlanId,
+                ExecutionMode = exec.ExecutionMode.ToString(),
+                Status = exec.Status.ToString(),
+                exec.TotalSteps, exec.PassedSteps, exec.FailedSteps, exec.SkippedSteps,
+                exec.ExecutedBy, exec.StartedAt, exec.CompletedAt, exec.FailureReason,
+                SourceTaskId = sourceTaskId,
+                Guidance = guidance
+            });
         });
 
         // Check if task can complete (testing requirements met)
-        app.MapGet("/api/tasks/{taskId:int}/can-complete", async (int taskId, LifecycleDbContext db) =>
+        app.MapGet("/api/tasks/{taskId:int}/can-complete", async (int taskId, bool? skipUiCheck, LifecycleDbContext db) =>
         {
             var task = await db.Tasks
                 .Include(t => t.TestPlans)
@@ -348,16 +389,22 @@ public static class TestPlanEndpoints
             if (!task.RequiredTestLevel.HasValue)
                 return Results.Ok(new { CanComplete = true, Reason = (string?)null });
 
-            // Gather all tests across all plans
             var allTests = task.TestPlans.SelectMany(tp => tp.Tests).ToList();
+            var checksTests = skipUiCheck == true
+                ? allTests.Where(t => t.Type != TestType.UI).ToList()
+                : allTests;
 
-            if (allTests.Count == 0)
+            if (checksTests.Count == 0 && allTests.Count == 0)
                 return Results.Ok(new { CanComplete = false, Reason = "No tests created. Create tests within a test plan first." });
 
-            var hasUnit = allTests.Any(t => t.Type == TestType.Unit);
-            var hasIntegration = allTests.Any(t => t.Type == TestType.Integration);
-            var anyFailing = allTests.Any(t => t.Status == TestStatus.Failing);
-            var anyNotRun = allTests.Any(t => t.Status == TestStatus.Created || t.Status == TestStatus.NotCreated);
+            // If skipUiCheck and we have no non-UI tests but have UI tests, allow completion
+            if (skipUiCheck == true && checksTests.Count == 0 && allTests.Count > 0)
+                return Results.Ok(new { CanComplete = true, Reason = (string?)null });
+
+            var hasUnit = checksTests.Any(t => t.Type == TestType.Unit);
+            var hasIntegration = checksTests.Any(t => t.Type == TestType.Integration);
+            var anyFailing = checksTests.Any(t => t.Status == TestStatus.Failing);
+            var anyNotRun = checksTests.Any(t => t.Status == TestStatus.Created || t.Status == TestStatus.NotCreated);
 
             var issues = new List<string>();
             if (!hasUnit) issues.Add("No Unit test found");
@@ -365,17 +412,19 @@ public static class TestPlanEndpoints
             if (anyFailing) issues.Add("Some tests are failing");
             if (anyNotRun) issues.Add("Some tests have not been run yet");
 
-            // Also check for a passing execution at the required level
-            var qualifyingPlan = task.TestPlans
-                .FirstOrDefault(tp => tp.RequiredLevel >= task.RequiredTestLevel.Value
-                    && tp.Executions.Any(e => e.Status == TestExecutionStatus.Passed));
-
-            if (qualifyingPlan is null)
+            if (skipUiCheck != true)
             {
-                var hasAnyPlan = task.TestPlans.Any(tp => tp.RequiredLevel >= task.RequiredTestLevel.Value);
-                issues.Add(hasAnyPlan
-                    ? "Test plan exists but no passing execution yet"
-                    : $"No test plan at level {task.RequiredTestLevel.Value} or above");
+                var qualifyingPlan = task.TestPlans
+                    .FirstOrDefault(tp => tp.RequiredLevel >= task.RequiredTestLevel.Value
+                        && tp.Executions.Any(e => e.Status == TestExecutionStatus.Passed));
+
+                if (qualifyingPlan is null)
+                {
+                    var hasAnyPlan = task.TestPlans.Any(tp => tp.RequiredLevel >= task.RequiredTestLevel.Value);
+                    issues.Add(hasAnyPlan
+                        ? "Test plan exists but no passing execution yet"
+                        : $"No test plan at level {task.RequiredTestLevel.Value} or above");
+                }
             }
 
             if (issues.Count > 0)

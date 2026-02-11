@@ -21,5 +21,6 @@ public enum ActivityType
     LabelCreated = 13,
     ProjectCreated = 14,
     BulkTasksCreated = 15,
-    PhaseBreakdown = 16
+    PhaseBreakdown = 16,
+    TestTaskGenerated = 17
 }

@@ -18,12 +18,15 @@ public class LifecycleTask
     public DateTime? DueDate { get; set; }
     public DateTime? StartedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
+    public bool IsArchived { get; set; }
+    public DateTime? ArchivedAt { get; set; }
     public string? GitCommitSha { get; set; }
     public string? GitBranch { get; set; }
     public string? PullRequestUrl { get; set; }
     public string? ConversationRef { get; set; }
     public TestLevel? RequiredTestLevel { get; set; }
     public TestAutonomyLevel? TestAutonomyLevel { get; set; }
+    public bool SkipUiTesting { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
     public Project Project { get; set; } = null!;
@@ -32,5 +35,7 @@ public class LifecycleTask
     public ICollection<Attachment> Attachments { get; set; } = new List<Attachment>();
     public ICollection<Comment> Comments { get; set; } = new List<Comment>();
     public ICollection<TaskLabel> TaskLabels { get; set; } = new List<TaskLabel>();
+    public int? SourceTaskId { get; set; }
+    public LifecycleTask? SourceTask { get; set; }
     public ICollection<TaskAssignment> Assignments { get; set; } = new List<TaskAssignment>();
 }

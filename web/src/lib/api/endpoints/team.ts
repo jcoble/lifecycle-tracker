@@ -39,6 +39,15 @@ export const team = {
 
 	claimTask: (taskId: number, agentName: string) =>
 		api.post(`/tasks/${taskId}/claim`, { agentName }),
+
+	getMonitor: (projectId: number) =>
+		api.get<import('$lib/types').MonitorData>(`/teams/monitor?projectId=${projectId}`),
+
+	getAgentPlan: (teamMemberId: number) =>
+		api.get<{ latestPlanFileName: string | null; latestPlanContent: string | null; updatedAt: string | null }>(`/teams/${teamMemberId}/plan`),
+
+	cleanupStale: () =>
+		api.post('/teams/cleanup-stale', {}),
 };
 
 export const escalations = {

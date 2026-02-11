@@ -79,6 +79,7 @@ export interface Phase {
 
 export interface Task {
 	id: number;
+	projectId?: number;
 	phaseId?: number;
 	title: string;
 	description?: string;
@@ -90,11 +91,14 @@ export interface Task {
 	dueDate?: string;
 	startedAt?: string;
 	completedAt?: string;
+	isArchived?: boolean;
+	archivedAt?: string;
 	gitCommitSha?: string;
 	gitBranch?: string;
 	pullRequestUrl?: string;
 	conversationRef?: string;
 	requiredTestLevel?: TestLevel;
+	skipUiTesting?: boolean;
 	createdAt: string;
 	updatedAt: string;
 	labels?: Label[];
@@ -334,4 +338,23 @@ export interface Dashboard {
 	};
 	recentActivity: ActivityLog[];
 	labels: Label[];
+}
+
+export interface MonitorAgent {
+	id: number;
+	agentName: string;
+	role: string;
+	modelName: string;
+	status: string;
+	currentActivity: string | null;
+	currentTask: { id: number; title: string; status: string } | null;
+	sessionStarted: string | null;
+	lastHeartbeat: string | null;
+	tokensUsed: number | null;
+	latestPlan: { fileName: string; updatedAt: string } | null;
+	isStale: boolean;
+}
+
+export interface MonitorData {
+	agents: MonitorAgent[];
 }

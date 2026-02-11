@@ -137,10 +137,11 @@ public static class ProjectEndpoints
             var phaseTasks = project.Milestones
                 .SelectMany(m => m.Phases)
                 .SelectMany(p => p.Tasks)
+                .Where(t => !t.IsArchived)
                 .ToList();
 
             var orphanTasks = await db.Tasks
-                .Where(t => t.PhaseId == null)
+                .Where(t => t.PhaseId == null && !t.IsArchived)
                 .ToListAsync();
 
             var allTasks = phaseTasks.Concat(orphanTasks).ToList();

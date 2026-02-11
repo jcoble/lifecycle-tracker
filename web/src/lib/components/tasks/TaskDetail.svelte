@@ -13,7 +13,8 @@
 	import ClipboardDropZone from './ClipboardDropZone.svelte';
 	import { formatRelative, formatDate } from '$lib/utils/date';
 	import { buildCommitUrl, buildBranchUrl } from '$lib/utils/git';
-	import { X, Send, Paperclip, GitBranch, MessageSquare, Trash2, FlaskConical, Play } from '@lucide/svelte';
+	import { X, Send, Paperclip, GitBranch, MessageSquare, Trash2, FlaskConical, Play, Square, Terminal, Copy, Check } from '@lucide/svelte';
+	import { markTestAgentActive, markTestAgentStopped } from '$lib/stores/testAgents';
 
 	let {
 		task,
@@ -49,6 +50,23 @@
 	let lightboxUrl = $state<string | null>(null);
 	let spawnBusy = $state(false);
 	let spawnResult = $state<string | null>(null);
+
+	// Agent log viewer state
+	let showLogPanel = $state(false);
+	let logLines = $state<string[]>([]);
+	let logOffset = $state(0);
+	let agentRunning = $state(false);
+	let logPollingTimer = $state<ReturnType<typeof setInterval> | null>(null);
+	let logContainer = $state<HTMLDivElement | null>(null);
+	let userScrolledUp = $state(false);
+	let stopBusy = $state(false);
+	let agentMessageText = $state('');
+	let messageBusy = $state(false);
+	let copyFeedback = $state(false);
+	let logPanelHeight = $state(360);
+	let resizing = $state(false);
+	let resizeStartY = $state(0);
+	let resizeStartHeight = $state(0);
 
 	const VALID_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
 		Backlog: ['Todo', 'Cancelled'],
@@ -134,6 +152,7 @@
 		try {
 			const result = await tasksApi.spawnTestAgent(task.id);
 			spawnResult = result.message;
+			markTestAgentActive(task.id);
 			setTimeout(() => { spawnResult = null; }, 5000);
 		} catch (err: unknown) {
 			spawnResult = err instanceof Error ? err.message : 'Failed to spawn test runner';
@@ -141,6 +160,145 @@
 		} finally {
 			spawnBusy = false;
 		}
+	}
+
+	async function pollAgentLog() {
+		try {
+			const data = await tasksApi.getAgentLog(task.id, logOffset);
+			if (data.lines.length > 0) {
+				logLines = [...logLines, ...data.lines];
+				logOffset = data.totalLines;
+				// Auto-scroll if user hasn't scrolled up
+				if (!userScrolledUp && logContainer) {
+					requestAnimationFrame(() => {
+						if (logContainer) logContainer.scrollTop = logContainer.scrollHeight;
+					});
+				}
+			}
+			agentRunning = data.running;
+			if (data.running) {
+				markTestAgentActive(task.id);
+			}
+			// Stop polling if agent finished and we got all lines
+			if (!data.running && data.lines.length === 0 && logLines.length > 0) {
+				markTestAgentStopped(task.id);
+				stopLogPolling();
+			}
+		} catch {
+			// silently ignore polling errors
+		}
+	}
+
+	function startLogPolling() {
+		if (logPollingTimer) return;
+		logOffset = 0;
+		logLines = [];
+		userScrolledUp = false;
+		pollAgentLog(); // immediate first poll
+		logPollingTimer = setInterval(pollAgentLog, 2000);
+	}
+
+	function stopLogPolling() {
+		if (logPollingTimer) {
+			clearInterval(logPollingTimer);
+			logPollingTimer = null;
+		}
+	}
+
+	function toggleLogPanel() {
+		showLogPanel = !showLogPanel;
+		if (showLogPanel) {
+			startLogPolling();
+		} else {
+			stopLogPolling();
+		}
+	}
+
+	function handleLogScroll() {
+		if (!logContainer) return;
+		const { scrollTop, scrollHeight, clientHeight } = logContainer;
+		// User is "scrolled up" if they're more than 40px from bottom
+		userScrolledUp = scrollHeight - scrollTop - clientHeight > 40;
+	}
+
+	async function handleStopAgent() {
+		if (stopBusy) return;
+		stopBusy = true;
+		try {
+			await tasksApi.stopAgent(task.id);
+			agentRunning = false;
+			markTestAgentStopped(task.id);
+			logLines = [...logLines, '[Agent stopped by user]'];
+		} catch {
+			// ignore
+		} finally {
+			stopBusy = false;
+		}
+	}
+
+	async function handleMessageAgent() {
+		if (messageBusy || !agentMessageText.trim()) return;
+		messageBusy = true;
+		try {
+			// If agent is still running, stop it first so we can resume with the message
+			if (agentRunning) {
+				await tasksApi.stopAgent(task.id);
+				agentRunning = false;
+				stopLogPolling();
+				// Brief pause to let process exit
+				await new Promise(r => setTimeout(r, 1000));
+			}
+			await tasksApi.messageAgent(task.id, agentMessageText.trim());
+			agentMessageText = '';
+			agentRunning = true;
+			// Restart polling to pick up new output
+			stopLogPolling();
+			logPollingTimer = setInterval(pollAgentLog, 2000);
+			pollAgentLog();
+			// Auto-scroll to bottom
+			userScrolledUp = false;
+			requestAnimationFrame(() => {
+				if (logContainer) logContainer.scrollTop = logContainer.scrollHeight;
+			});
+		} catch (err: unknown) {
+			const msg = err instanceof Error ? err.message : 'Failed to send message';
+			logLines = [...logLines, `[Error] ${msg}`];
+		} finally {
+			messageBusy = false;
+		}
+	}
+
+	function handleCopyLog() {
+		navigator.clipboard.writeText(logLines.join('\n'));
+		copyFeedback = true;
+		setTimeout(() => { copyFeedback = false; }, 2000);
+	}
+
+	// Clean up polling on component destroy
+	$effect(() => {
+		return () => stopLogPolling();
+	});
+
+	function handleResizeStart(e: MouseEvent) {
+		e.preventDefault();
+		resizing = true;
+		resizeStartY = e.clientY;
+		resizeStartHeight = logPanelHeight;
+		window.addEventListener('mousemove', handleResizeMove);
+		window.addEventListener('mouseup', handleResizeEnd);
+	}
+
+	function handleResizeMove(e: MouseEvent) {
+		if (!resizing) return;
+		// Dragging up = larger panel (startY - clientY is positive when moving up)
+		const delta = resizeStartY - e.clientY;
+		logPanelHeight = Math.max(120, Math.min(resizeStartHeight + delta, 700));
+	}
+
+	function handleResizeEnd() {
+		resizing = false;
+		window.removeEventListener('mousemove', handleResizeMove);
+		window.removeEventListener('mouseup', handleResizeEnd);
 	}
 
 	function handleKeydown(e: KeyboardEvent) {
@@ -172,13 +330,31 @@
 			{/if}
 		</div>
 		<div class="flex items-center gap-1">
+			{#if agentRunning}
+				<button
+					onclick={handleStopAgent}
+					disabled={stopBusy}
+					class="rounded p-1 text-red-400 transition-colors hover:bg-red-500/10 hover:text-red-500 disabled:opacity-50"
+					title="Stop agent"
+				>
+					<Square class="h-4 w-4" />
+				</button>
+			{:else}
+				<button
+					onclick={handleRunTests}
+					disabled={spawnBusy}
+					class="rounded p-1 text-text-tertiary transition-colors hover:bg-green-500/10 hover:text-green-500 disabled:opacity-50"
+					title="Run tests"
+				>
+					<Play class="h-4 w-4" />
+				</button>
+			{/if}
 			<button
-				onclick={handleRunTests}
-				disabled={spawnBusy}
-				class="rounded p-1 text-text-tertiary transition-colors hover:bg-green-500/10 hover:text-green-500 disabled:opacity-50"
-				title="Run tests"
+				onclick={toggleLogPanel}
+				class="rounded p-1 transition-colors {showLogPanel ? 'text-accent bg-accent/10' : 'text-text-tertiary hover:bg-surface-hover hover:text-text-primary'}"
+				title="Agent output"
 			>
-				<Play class="h-4 w-4" />
+				<Terminal class="h-4 w-4" />
 			</button>
 			<button
 				onclick={deleteTask}
@@ -477,6 +653,105 @@
 			{/if}
 		</div>
 	</div>
+
+	<!-- Agent Log Panel -->
+	{#if showLogPanel}
+		<div class="flex flex-col" style="height: {logPanelHeight}px; min-height: 120px;">
+			<!-- Resize handle -->
+			<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div
+				onmousedown={handleResizeStart}
+				class="h-1.5 cursor-row-resize border-t border-border bg-[#1a1a2e] hover:bg-accent/30 transition-colors flex items-center justify-center"
+			>
+				<div class="w-8 h-0.5 rounded-full bg-text-tertiary/40"></div>
+			</div>
+			<!-- Log header -->
+			<div class="flex items-center justify-between px-3 py-1.5 bg-[#1a1a2e] border-b border-border">
+				<div class="flex items-center gap-2">
+					<Terminal class="h-3 w-3 text-text-tertiary" />
+					<span class="text-xs font-medium text-text-secondary">Agent Output</span>
+					{#if agentRunning}
+						<span class="flex items-center gap-1 text-[10px] text-green-400">
+							<span class="relative flex h-1.5 w-1.5">
+								<span class="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-75"></span>
+								<span class="relative inline-flex h-1.5 w-1.5 rounded-full bg-green-500"></span>
+							</span>
+							Live
+						</span>
+					{:else if logLines.length > 0}
+						<span class="text-[10px] text-text-tertiary">Finished</span>
+					{/if}
+				</div>
+				<div class="flex items-center gap-2">
+					<span class="text-[10px] text-text-tertiary">{logLines.length} lines</span>
+					{#if logLines.length > 0}
+						<button
+							onclick={handleCopyLog}
+							class="rounded px-1.5 py-0.5 text-[10px] font-medium text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-primary"
+							title="Copy all log output"
+						>
+							{#if copyFeedback}
+								<Check class="h-3 w-3 inline -mt-0.5 text-green-400" /> Copied!
+							{:else}
+								<Copy class="h-3 w-3 inline -mt-0.5" /> Copy
+							{/if}
+						</button>
+					{/if}
+					{#if agentRunning}
+						<button
+							onclick={handleStopAgent}
+							disabled={stopBusy}
+							class="rounded px-1.5 py-0.5 text-[10px] font-medium text-red-400 transition-colors hover:bg-red-500/10 disabled:opacity-50"
+							title="Stop agent"
+						>
+							<Square class="h-3 w-3 inline -mt-0.5" /> Stop
+						</button>
+					{/if}
+				</div>
+			</div>
+			<!-- Log content -->
+			<div
+				bind:this={logContainer}
+				onscroll={handleLogScroll}
+				class="flex-1 overflow-y-auto bg-[#0d0d1a] px-3 py-2 font-mono text-xs leading-relaxed text-green-300/80"
+			>
+				{#if logLines.length === 0}
+					<span class="text-text-tertiary italic">No output yet{agentRunning ? ' — waiting for agent...' : ''}</span>
+				{:else}
+					{#each logLines as line}
+						{#if line.startsWith('[You]')}
+							<div class="whitespace-pre-wrap break-all text-blue-400 font-semibold">{line}</div>
+						{:else if line.startsWith('[Error]')}
+							<div class="whitespace-pre-wrap break-all text-red-400">{line}</div>
+						{:else}
+							<div class="whitespace-pre-wrap break-all">{line}</div>
+						{/if}
+					{/each}
+				{/if}
+			</div>
+			<!-- Message input (visible when log has output — auto-stops agent if still running) -->
+			{#if logLines.length > 0}
+				<div class="flex items-center gap-2 border-t border-border bg-[#1a1a2e] px-3 py-2">
+					<input
+						type="text"
+						bind:value={agentMessageText}
+						onkeydown={(e) => { if (e.key === 'Enter') handleMessageAgent(); }}
+						placeholder="Send instructions to agent..."
+						disabled={messageBusy}
+						class="flex-1 rounded-md border border-border bg-[#0d0d1a] px-2 py-1.5 text-xs text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none disabled:opacity-50"
+					/>
+					<button
+						onclick={handleMessageAgent}
+						disabled={messageBusy || !agentMessageText.trim()}
+						class="rounded-md bg-accent px-2.5 py-1.5 text-xs text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
+						title="Send message to agent"
+					>
+						<Send class="h-3.5 w-3.5" />
+					</button>
+				</div>
+			{/if}
+		</div>
+	{/if}
 </div>
 
 <!-- Image Lightbox -->

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Lifecycle Tracker — Start Script
-# Starts API (port 5556) and Web (port 5557), seeds data on first run
+# Starts API (port 5556) and Web (port 5555), seeds data on first run
 
 set -e
 
@@ -9,6 +9,7 @@ API_DIR="$SCRIPT_DIR/api"
 WEB_DIR="$SCRIPT_DIR/web"
 DB_FILE="$API_DIR/lifecycle.db"
 PIDS_FILE="$SCRIPT_DIR/.pids"
+WEB_PORT=5555
 
 # Colors
 RED='\033[0;31m'
@@ -161,7 +162,7 @@ fi
 
 # Start web dev server
 echo ""
-echo -e "${BLUE}Starting web dev server on port 5557...${NC}"
+echo -e "${BLUE}Starting web dev server on port ${WEB_PORT}...${NC}"
 cd "$WEB_DIR"
 pnpm dev > "$SCRIPT_DIR/.web.log" 2>&1 &
 WEB_PID=$!
@@ -171,7 +172,7 @@ echo -e "${GREEN}✓ Web started (PID: $WEB_PID)${NC}"
 # Wait for web to be ready
 echo -e "${YELLOW}Waiting for web server to be ready...${NC}"
 WAITED=0
-while ! curl -s http://localhost:5557 >/dev/null 2>&1; do
+while ! curl -s "http://localhost:${WEB_PORT}" >/dev/null 2>&1; do
     sleep 1
     WAITED=$((WAITED + 1))
     if [ $WAITED -ge $MAX_WAIT ]; then
@@ -187,7 +188,7 @@ echo -e "${BLUE}═════════════════════�
 echo -e "${GREEN}  Lifecycle Tracker is running!${NC}"
 echo -e "${BLUE}═══════════════════════════════════════════${NC}"
 echo ""
-echo -e "  ${BLUE}Web UI:${NC}  http://localhost:5557"
+echo -e "  ${BLUE}Web UI:${NC}  http://localhost:${WEB_PORT}"
 echo -e "  ${BLUE}API:${NC}     http://localhost:5556"
 echo -e "  ${BLUE}SSE:${NC}     http://localhost:5556/api/events?projectId=1"
 echo ""

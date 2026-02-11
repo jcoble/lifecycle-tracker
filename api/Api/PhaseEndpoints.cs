@@ -17,7 +17,7 @@ public static class PhaseEndpoints
         {
             var phases = await db.Phases
                 .Where(p => p.MilestoneId == milestoneId)
-                .Include(p => p.Tasks)
+                .Include(p => p.Tasks.Where(t => !t.IsArchived))
                 .OrderBy(p => p.OrderIndex)
                 .ToListAsync();
 
@@ -61,8 +61,8 @@ public static class PhaseEndpoints
         directGroup.MapGet("/{id:int}", async (int id, LifecycleDbContext db) =>
         {
             var phase = await db.Phases
-                .Include(p => p.Tasks).ThenInclude(t => t.TaskLabels).ThenInclude(tl => tl.Label)
-                .Include(p => p.Tasks).ThenInclude(t => t.TestPlans).ThenInclude(tp => tp.Tests)
+                .Include(p => p.Tasks.Where(t => !t.IsArchived)).ThenInclude(t => t.TaskLabels).ThenInclude(tl => tl.Label)
+                .Include(p => p.Tasks.Where(t => !t.IsArchived)).ThenInclude(t => t.TestPlans).ThenInclude(tp => tp.Tests)
                 .FirstOrDefaultAsync(p => p.Id == id);
             if (phase is null) return Results.NotFound();
 

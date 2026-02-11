@@ -57,6 +57,23 @@ public static class AttachmentEndpoints
             });
         }).DisableAntiforgery();
 
+        // List attachments for a task
+        taskGroup.MapGet("/", async (int taskId, LifecycleDbContext db) =>
+        {
+            var attachments = await db.Attachments
+                .Where(a => a.TaskId == taskId)
+                .OrderByDescending(a => a.UploadedAt)
+                .Select(a => new
+                {
+                    a.Id, a.TaskId, a.FileName, a.OriginalFileName,
+                    a.ContentType, a.FileSize, a.Width, a.Height,
+                    a.UploadedBy, a.UploadedAt
+                })
+                .ToListAsync();
+            return Results.Ok(attachments);
+        });
+
+        // Get attachment file
         directGroup.MapGet("/{id:int}", async (int id, LifecycleDbContext db) =>
         {
             var attachment = await db.Attachments.FindAsync(id);
@@ -66,6 +83,24 @@ public static class AttachmentEndpoints
                 return Results.NotFound();
 
             return Results.File(attachment.StoragePath, attachment.ContentType, attachment.OriginalFileName);
+        });
+
+        // Get attachment as base64 (for MCP/AI consumption)
+        directGroup.MapGet("/{id:int}/base64", async (int id, LifecycleDbContext db) =>
+        {
+            var attachment = await db.Attachments.FindAsync(id);
+            if (attachment is null) return Results.NotFound();
+
+            if (!File.Exists(attachment.StoragePath))
+                return Results.NotFound();
+
+            var bytes = await File.ReadAllBytesAsync(attachment.StoragePath);
+            return Results.Ok(new
+            {
+                attachment.Id, attachment.TaskId, attachment.OriginalFileName,
+                attachment.ContentType, attachment.Width, attachment.Height,
+                Base64Data = Convert.ToBase64String(bytes)
+            });
         });
 
         directGroup.MapDelete("/{id:int}", async (int id, LifecycleDbContext db) =>

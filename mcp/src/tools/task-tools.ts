@@ -1,68 +1,11 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { api, getActiveProjectId } from '../api-client.js';
+import { setLastActivity } from '../index.js';
 
 interface ProjectSettings {
   id: number;
   settings: Record<string, string>;
-}
-
-
-function buildTestingInstructions(settings: Record<string, string>, stage: 'write' | 'run'): string {
-  const unitLevel = settings.unitTestLevel || 'Full';
-  const integrationLevel = settings.integrationTestLevel || 'Full';
-  const uiLevel = settings.uiTestLevel || 'Smoke';
-  const unitCmd = settings.unitTestCommand || 'dotnet test';
-  const integrationCmd = settings.integrationTestCommand || 'dotnet test --filter Integration';
-  const webTool = settings.webTestTool || 'agent-browser';
-
-  if (stage === 'write') {
-    const lines = [
-      '=== TESTING REQUIRED (enforced by lifecycle) ===',
-      '',
-      'You MUST write tests for this task before completing it.',
-      'Use create_test_plan to define tests with steps, then start_test_execution, record_step_result, and complete_test_execution.',
-      '',
-      `1. UNIT TESTS (${unitLevel} coverage)`,
-      `   Command: ${unitCmd}`,
-      unitLevel === 'Full'
-        ? '   Write tests for ALL methods/logic changed. 100% coverage of new code.'
-        : '   Write tests for critical paths.',
-      '',
-      `2. INTEGRATION TESTS (${integrationLevel} coverage)`,
-      `   Command: ${integrationCmd}`,
-      integrationLevel === 'Full'
-        ? '   Write tests for ALL API endpoints and DB operations affected. Use EdiPlatform_AutomatedTests DB.'
-        : '   Write tests for main integration points.',
-      '',
-      `3. UI/E2E TESTS (${uiLevel})`,
-      `   Tool: ${webTool}`,
-      uiLevel === 'Smoke'
-        ? '   Happy-path smoke tests only. Verify the feature works end-to-end in the browser.'
-        : uiLevel === 'Full'
-          ? '   Full E2E coverage including error states and edge cases.'
-          : '   Skip UI tests for backend-only changes. Add smoke test if UI is affected.',
-      '',
-      'After writing tests, RUN them through test plan executions before completing.',
-      'complete_task will BLOCK if no test plan has a passing execution.',
-      '================================================',
-    ];
-    return lines.join('\n');
-  } else {
-    const lines = [
-      '=== RUN ALL TESTS (enforced by lifecycle) ===',
-      '',
-      'Before completing this task, you MUST:',
-      `1. Run unit tests: ${unitCmd}`,
-      `2. Run integration tests: ${integrationCmd}`,
-      `3. Run UI smoke tests with ${webTool} (if applicable)`,
-      '',
-      'Record results through test plan executions (start_test_execution → record_step_result → complete_test_execution).',
-      'complete_task will BLOCK if no test plan has a passing execution.',
-      '===============================================',
-    ];
-    return lines.join('\n');
-  }
 }
 
 export function registerTaskTools(server: McpServer) {
@@ -81,6 +24,7 @@ export function registerTaskTools(server: McpServer) {
       })).describe('Array of tasks to create'),
     },
     async ({ projectId, phaseId, tasks }) => {
+      setLastActivity(`Creating ${tasks.length} task(s)`);
       const pid = projectId ?? getActiveProjectId();
       const result = await api.post('/ai/tasks/bulk-create', { projectId: pid, phaseId, tasks });
       return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
@@ -89,58 +33,122 @@ export function registerTaskTools(server: McpServer) {
 
   server.tool(
     'start_task',
-    'Move a task to InProgress status. Returns TESTING REQUIREMENTS that must be followed.',
+    'Move a task to InProgress status. Returns testing guidance.',
     {
       taskId: z.number().describe('Task ID to start'),
     },
     async ({ taskId }) => {
+      setLastActivity(`Starting task #${taskId}`);
+
+      // Check current status — if Backlog, step through Todo first
+      try {
+        const task = await api.get<{ id: number; status: string }>(`/tasks/${taskId}`);
+        if (task.status === 'Backlog') {
+          await api.post(`/ai/tasks/${taskId}/transition`, { status: 'Todo' });
+        }
+      } catch {
+        // If we can't fetch, try the direct transition and let the API handle it
+      }
+
       const result = await api.post(`/ai/tasks/${taskId}/transition`, { status: 'InProgress' });
 
-      // Fetch project settings and include testing instructions
-      let testingInstructions = '';
+      // Fetch task type for type-specific guidance
+      let taskType = 'Feature';
       try {
-        const projectSettings = await api.get<ProjectSettings>('/ai/settings');
-        if (projectSettings?.settings?.testEnforcement === 'true') {
-          testingInstructions = '\n\n' + buildTestingInstructions(projectSettings.settings, 'write');
-        }
-      } catch {
-        // Settings fetch failed, continue without instructions
+        const taskInfo = await api.get<{ type: string }>(`/tasks/${taskId}`);
+        taskType = taskInfo.type;
+      } catch { /* use default */ }
+
+      // Return type-specific workflow guidance
+      let workflowNote = '';
+      if (taskType === 'Test') {
+        workflowNote = [
+          '',
+          '=== TEST TASK WORKFLOW — READ CAREFULLY ===',
+          '',
+          'This is a Test task. You must run ACTUAL UI tests using agent-browser.',
+          'You CANNOT just mark this task as Done — it requires a passing test execution.',
+          '',
+          'Steps:',
+          '1. Read the test plan: check the task description and linked test plan for what to verify',
+          '2. Start execution: call start_test_execution with the test plan ID',
+          '3. Open the app: use agent-browser to open the application URL',
+          '4. For EACH test step:',
+          '   a. Perform the action described in the step using agent-browser',
+          '   b. Verify the expected result visually',
+          '   c. Call record_step_result with Passed or Failed',
+          '5. Complete execution: call complete_test_execution with Passed or Failed',
+          '6. If ALL steps passed: call complete_task to mark the Test task as Done',
+          '7. If ANY step failed: call report_test_failure on the SOURCE task with details',
+          '',
+          'IMPORTANT:',
+          '- complete_task WILL BE BLOCKED if you skip the test execution steps',
+          '- Do NOT retry complete_task hoping it will work — run the tests first',
+          '- The agent-browser skill is: agent-browser open <url>',
+          '============================================',
+        ].join('\n');
+      } else if (['Feature', 'Bug', 'Refactor'].includes(taskType)) {
+        workflowNote = [
+          '',
+          '=== MANDATORY WORKFLOW — READ CAREFULLY ===',
+          '',
+          'You MUST follow this exact workflow for Feature/Bug/Refactor tasks:',
+          '',
+          '1. CODE: Implement the task (you are here — task is now InProgress)',
+          '2. REVIEW: When done coding, call request_review (NOT complete_task)',
+          '   - This moves the task to Review status',
+          '   - A linked Test task is auto-created for UI testing',
+          '   - Include a testPlan with steps describing how to verify the feature',
+          '3. WAIT: The test agent will pick up the linked Test task and run UI tests',
+          '4. COMPLETE: Only after the Test task is Done can you call complete_task',
+          '',
+          'IMPORTANT:',
+          '- Do NOT call complete_task directly — it will be BLOCKED',
+          '- Do NOT try to bypass via direct API calls — the API enforces the same rules',
+          '- Do NOT change the task type or skipUiTesting flag — these are locked',
+          '- Do NOT rush a Test task to Done — Test tasks require a passing test execution',
+          '',
+          'WHEN WRITING TESTS:',
+          '- Keep track of every test file you create (unit tests, integration tests)',
+          '- When calling request_review, pass them in the backendTests parameter:',
+          '  backendTests: [',
+          '    { name: "OrderServiceTests", testFile: "Tests/Services/OrderServiceTests.cs", type: "Unit", framework: "xUnit" },',
+          '    { name: "InvoiceIntegrationTests", testFile: "Tests/Integration/InvoiceTests.cs", type: "Integration", framework: "xUnit" }',
+          '  ]',
+          '- This auto-registers them with the lifecycle system — no separate step needed',
+          '',
+          'If the test agent finds bugs, your task will be moved back to InProgress',
+          'with failure details in the comments. Fix the issues and call request_review again.',
+          '============================================',
+        ].join('\n');
       }
 
-      // Check if task has RequiredTestLevel for UI test plan requirements
-      let testPlanInstructions = '';
+      // Also fetch project-specific test commands if available
+      let testingNote = '';
       try {
-        const taskDetail = result as Record<string, unknown>;
-        const requiredTestLevel = taskDetail?.requiredTestLevel;
-        if (requiredTestLevel) {
-          testPlanInstructions = [
-            '',
-            '=== UI TEST PLAN REQUIRED (enforced by lifecycle) ===',
-            '',
-            `This task requires a UI test plan at level: ${requiredTestLevel}`,
-            '',
-            'You MUST create and execute a test plan before completing this task:',
-            '1. Create test plan: create_test_plan (with steps for agent-browser)',
-            '2. Start execution: start_test_execution',
-            '3. Run each step with agent-browser and record: record_step_result',
-            '4. Complete execution: complete_test_execution',
-            '',
-            'complete_task will BLOCK until a test plan has a passing execution.',
-            '=====================================================',
-          ].join('\n');
-        }
+        const projectSettings = await api.get<ProjectSettings>(`/ai/settings?projectId=${getActiveProjectId()}`);
+        const settings = projectSettings?.settings || {};
+        const unitCmd = settings.unitTestCommand || 'dotnet test';
+        const integrationCmd = settings.integrationTestCommand || 'dotnet test --filter Integration';
+        testingNote = [
+          '',
+          '=== PROJECT TEST COMMANDS ===',
+          `Unit tests: ${unitCmd}`,
+          `Integration tests: ${integrationCmd}`,
+          'Run these before calling request_review to catch issues early.',
+          '=============================',
+        ].join('\n');
       } catch {
-        // Task detail parsing failed, continue
+        // Settings fetch failed, continue
       }
 
-      const output = JSON.stringify(result) + testingInstructions + testPlanInstructions;
-      return { content: [{ type: 'text' as const, text: output }] };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) + workflowNote + testingNote }] };
     }
   );
 
   server.tool(
     'complete_task',
-    'Move a task to Done status. BLOCKS if required tests are missing or not run.',
+    'Move task to Done. For Feature/Bug/Refactor tasks, the task must be in Review status (use request_review first). Test/Docs/Infra/Research tasks can be completed directly.',
     {
       taskId: z.number().describe('Task ID to complete'),
       commitSha: z.string().optional().describe('Git commit SHA'),
@@ -148,26 +156,68 @@ export function registerTaskTools(server: McpServer) {
       prUrl: z.string().optional().describe('Pull request URL'),
     },
     async ({ taskId, commitSha, gitBranch, prUrl }) => {
-      // Check test enforcement via unified can-complete endpoint
+      setLastActivity(`Completing task #${taskId}`);
+
+      // Fetch task to check type and status
+      const REVIEW_REQUIRED_TYPES = ['Feature', 'Bug', 'Refactor'];
+      try {
+        const task = await api.get<{ id: number; type: string; status: string; title: string }>(
+          `/tasks/${taskId}`
+        );
+        if (REVIEW_REQUIRED_TYPES.includes(task.type) && task.status !== 'Review') {
+          const blockMsg = [
+            '=== COMPLETION BLOCKED ===',
+            '',
+            `Task #${taskId} "${task.title}" is a ${task.type} task in ${task.status} status.`,
+            '',
+            'Feature/Bug/Refactor tasks must go through Review before completion.',
+            'Use request_review to submit this task for review first.',
+            'A linked Test task will be created and must pass before completing.',
+            '==========================',
+          ].join('\n');
+          return { content: [{ type: 'text' as const, text: blockMsg }] };
+        }
+      } catch {
+        // If we can't fetch the task, let the API handle validation
+      }
+
+      // Check test enforcement - skip UI checks
       try {
         const canComplete = await api.get<{ canComplete: boolean; reason: string | null }>(
-          `/tasks/${taskId}/can-complete`
+          `/tasks/${taskId}/can-complete?skipUiCheck=true`
         );
         if (!canComplete.canComplete) {
+          // Give specific guidance based on what's blocking
+          const reason = canComplete.reason || '';
+          let guidance = '';
+          if (reason.includes('passing test execution')) {
+            guidance = [
+              '',
+              'STOP: Do NOT retry complete_task — it will keep failing.',
+              'You must run UI tests with agent-browser first:',
+              '',
+              '  1. start_test_execution — begin the test plan execution',
+              '  2. agent-browser open <app-url> — open the app in a browser',
+              '  3. For each test step, verify it visually with agent-browser',
+              '  4. record_step_result — record Passed/Failed for each step',
+              '  5. complete_test_execution — mark execution as Passed or Failed',
+              '  6. THEN call complete_task',
+            ].join('\n');
+          } else if (reason.includes('linked Test task')) {
+            guidance = '\nThe linked Test task must be completed by the test agent before this task can be finished.';
+          } else {
+            guidance = '\nFix the issues above, then call complete_task again.';
+          }
           const blockMsg = [
-            '=== COMPLETION BLOCKED BY LIFECYCLE TEST ENFORCEMENT ===',
+            '=== COMPLETION BLOCKED ===',
             '',
             canComplete.reason,
-            '',
-            'Use create_test_plan to define tests with steps, start_test_execution to begin,',
-            'record_step_result for each step, and complete_test_execution when done. Fix all issues then call complete_task again.',
-            '=========================================================',
+            guidance,
+            '==========================',
           ].join('\n');
-
           return { content: [{ type: 'text' as const, text: blockMsg }] };
         }
       } catch (err) {
-        // If the can-complete endpoint is unreachable, block completion rather than silently bypassing
         const blockMsg = [
           '=== COMPLETION BLOCKED - TEST ENFORCEMENT UNAVAILABLE ===',
           '',
@@ -186,6 +236,118 @@ export function registerTaskTools(server: McpServer) {
         gitCommitSha: commitSha,
         gitBranch,
         pullRequestUrl: prUrl,
+      });
+
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
+    }
+  );
+
+  server.tool(
+    'request_review',
+    'Submit a task for review. Moves task to Review status and ALWAYS creates a linked Test task for Feature/Bug/Refactor types (unless skipUiTesting is set). Use this instead of complete_task when done coding. Providing a testPlan with specific test steps is recommended but not required — a placeholder smoke test is created if omitted.',
+    {
+      taskId: z.number().describe('Task ID to submit for review'),
+      commitSha: z.string().optional().describe('Git commit SHA'),
+      gitBranch: z.string().optional().describe('Git branch name'),
+      prUrl: z.string().optional().describe('Pull request URL'),
+      testPlan: z.object({
+        name: z.string(),
+        testLevel: z.enum(['Smoke', 'Comprehensive', 'FullE2E']).default('Smoke'),
+        tests: z.array(z.object({
+          name: z.string(),
+          type: z.enum(['Unit', 'Integration', 'UI', 'Manual']).default('UI'),
+          steps: z.array(z.object({
+            description: z.string(),
+            expectedResult: z.string().optional(),
+            stepType: z.enum(['Setup', 'Action', 'Assertion', 'Teardown']).default('Action'),
+          }))
+        }))
+      }).optional().describe('Optional test plan - auto-creates a linked Test task for UI testing'),
+      backendTests: z.array(z.object({
+        name: z.string().describe('Test class or describe block name'),
+        testFile: z.string().describe('Relative path to test file from project root'),
+        type: z.enum(['Unit', 'Integration']).default('Unit'),
+        framework: z.string().optional().describe('Test framework: xUnit, Vitest, etc.'),
+      })).optional().describe('Backend test files written during implementation — auto-registered on the source task'),
+    },
+    async ({ taskId, commitSha, gitBranch, prUrl, testPlan, backendTests }) => {
+      setLastActivity(`Requesting review for task #${taskId}`);
+      const body: Record<string, unknown> = {};
+      if (commitSha) body.gitCommitSha = commitSha;
+      if (gitBranch) body.gitBranch = gitBranch;
+      if (prUrl) body.pullRequestUrl = prUrl;
+      if (testPlan) {
+        body.testPlan = {
+          testPlanName: testPlan.name,
+          testLevel: testPlan.testLevel,
+          tests: testPlan.tests.map(t => ({
+            name: t.name,
+            type: t.type,
+            steps: t.steps.map(s => ({
+              description: s.description,
+              expectedResult: s.expectedResult,
+              stepType: s.stepType,
+            })),
+          })),
+        };
+      }
+      if (backendTests) body.backendTests = backendTests;
+      const result = await api.post<{ id: number; backendTestPlanId?: number; backendTestCount?: number }>(`/ai/tasks/${taskId}/request-review`, body);
+
+      let backendNote = '';
+      if (result.backendTestPlanId) {
+        backendNote = [
+          '',
+          '=== BACKEND TESTS REGISTERED ===',
+          `${result.backendTestCount} backend test(s) registered on task #${result.id}.`,
+          'Run your tests now to verify they pass before the review proceeds.',
+          '================================',
+        ].join('\n');
+      }
+
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) + backendNote }] };
+    }
+  );
+
+  server.tool(
+    'cancel_task',
+    'Cancel a task that is no longer needed. Use when work was superseded, duplicated, or abandoned. Can cancel from any status except Done.',
+    {
+      taskId: z.number().describe('Task ID to cancel'),
+      reason: z.string().describe('Why the task is being cancelled (e.g. "Superseded by task #174 in phase 23")'),
+    },
+    async ({ taskId, reason }) => {
+      setLastActivity(`Cancelling task #${taskId}`);
+      const result = await api.post(`/ai/tasks/${taskId}/transition`, { status: 'Cancelled' });
+
+      // Add a comment with the cancellation reason
+      try {
+        await api.post(`/tasks/${taskId}/comments`, {
+          content: `Cancelled: ${reason}`,
+          source: 'System',
+          author: 'Claude',
+        });
+      } catch {
+        // Comment is best-effort
+      }
+
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
+    }
+  );
+
+  server.tool(
+    'report_test_failure',
+    'Report a test failure back to the source task. Moves the source task back to InProgress with failure details.',
+    {
+      sourceTaskId: z.number().describe('The source (feature/bug) task ID to report failure on'),
+      failureDescription: z.string().describe('Description of what failed and why'),
+      testTaskId: z.number().optional().describe('The test task ID that found the failure'),
+    },
+    async ({ sourceTaskId, failureDescription, testTaskId }) => {
+      setLastActivity(`Reporting test failure on task #${sourceTaskId}`);
+      const result = await api.post(`/ai/tasks/${sourceTaskId}/report-test-failure`, {
+        failureDescription,
+        testTaskId,
       });
       return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
