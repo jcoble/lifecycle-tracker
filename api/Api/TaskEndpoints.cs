@@ -579,15 +579,15 @@ public static class TaskEndpoints
                 catch { }
             }
 
-            // Check if agent is still running via PID file
-            var pidFile = $"/tmp/test-agent-{taskId}.pid";
+            // Check if agent is still running via PID file (check both test-agent and resolve-agent)
             var running = false;
-            if (File.Exists(pidFile))
+            foreach (var pidFile in new[] { $"/tmp/test-agent-{taskId}.pid", $"/tmp/resolve-agent-{taskId}.pid" })
             {
+                if (!File.Exists(pidFile)) continue;
                 var pidText = File.ReadAllText(pidFile).Trim();
                 if (int.TryParse(pidText, out var pid))
                 {
-                    try { Process.GetProcessById(pid); running = true; }
+                    try { Process.GetProcessById(pid); running = true; break; }
                     catch { /* process exited — clean up PID file */ try { File.Delete(pidFile); } catch { } }
                 }
             }

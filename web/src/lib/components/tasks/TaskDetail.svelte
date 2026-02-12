@@ -343,7 +343,7 @@
 ></button>
 
 <!-- Panel -->
-<div class="fixed top-0 right-0 z-50 flex h-full w-full max-w-lg flex-col border-l border-border bg-bg shadow-xl">
+<div class="fixed top-0 right-0 z-50 flex h-full w-full max-w-2xl flex-col border-l border-border bg-bg shadow-xl">
 	<!-- Header -->
 	<div class="flex items-center justify-between border-b border-border px-4 py-3">
 		<div class="flex items-center gap-2">

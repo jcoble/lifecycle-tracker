@@ -35,14 +35,14 @@
 	<!-- Content -->
 	{#if mode === 'edit'}
 		<textarea
-			class="w-full resize-y bg-transparent px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
-			rows="4"
+			class="w-full resize-y bg-transparent px-3 py-2 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none min-h-[160px]"
+			rows="10"
 			{placeholder}
 			bind:value
 			oninput={() => onchange?.(value)}
 		></textarea>
 	{:else}
-		<div class="prose prose-invert prose-sm max-w-none px-3 py-2 text-text-secondary">
+		<div class="prose prose-invert prose-sm max-w-none px-3 py-2 text-text-secondary min-h-[160px] max-h-[50vh] overflow-y-auto">
 			{#if value}
 				{@html rendered}
 			{:else}
