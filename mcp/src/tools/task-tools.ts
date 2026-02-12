@@ -90,36 +90,29 @@ export function registerTaskTools(server: McpServer) {
       } else if (['Feature', 'Bug', 'Refactor'].includes(taskType)) {
         workflowNote = [
           '',
-          '=== MANDATORY WORKFLOW — READ CAREFULLY ===',
+          '=== MANDATORY WORKFLOW ===',
           '',
-          'You MUST follow this exact workflow for Feature/Bug/Refactor tasks:',
-          '',
-          '1. CODE: Implement the task (you are here — task is now InProgress)',
-          '2. REVIEW: When done coding, call request_review (NOT complete_task)',
-          '   - This moves the task to Review status',
-          '   - A linked Test task is auto-created for UI testing',
-          '   - Include a testPlan with steps describing how to verify the feature',
-          '3. WAIT: The test agent will pick up the linked Test task and run UI tests',
-          '4. COMPLETE: Only after the Test task is Done can you call complete_task',
-          '',
-          'IMPORTANT:',
-          '- Do NOT call complete_task directly — it will be BLOCKED',
-          '- Do NOT try to bypass via direct API calls — the API enforces the same rules',
-          '- Do NOT change the task type or skipUiTesting flag — these are locked',
-          '- Do NOT rush a Test task to Done — Test tasks require a passing test execution',
+          '1. CODE: Implement with TDD — write tests FIRST, then implementation',
+          '2. REVIEW: Call request_review with backendTests[] and testPlan',
+          '   - All tests are registered on THIS task (no separate Test task)',
+          '   - Include unit, integration, AND UI test scenarios',
+          '3. TESTS MUST PASS: Task cannot complete until all registered tests pass',
+          '4. PR: Create a PR after review submission',
           '',
           'WHEN WRITING TESTS:',
-          '- Keep track of every test file you create (unit tests, integration tests)',
-          '- When calling request_review, pass them in the backendTests parameter:',
+          '- Write tests BEFORE implementation (TDD)',
+          '- Track every test file in backendTests:',
           '  backendTests: [',
           '    { name: "OrderServiceTests", testFile: "Tests/Services/OrderServiceTests.cs", type: "Unit", framework: "xUnit" },',
           '    { name: "InvoiceIntegrationTests", testFile: "Tests/Integration/InvoiceTests.cs", type: "Integration", framework: "xUnit" }',
           '  ]',
-          '- This auto-registers them with the lifecycle system — no separate step needed',
+          '- Define UI test scenarios in testPlan parameter',
+          '- Both go on THIS task — no separate test task',
           '',
-          'If the test agent finds bugs, your task will be moved back to InProgress',
-          'with failure details in the comments. Fix the issues and call request_review again.',
-          '============================================',
+          'IMPORTANT:',
+          '- Do NOT call complete_task directly — use request_review first',
+          '- complete_task is BLOCKED until all tests on this task pass',
+          '========================',
         ].join('\n');
       }
 
@@ -172,7 +165,6 @@ export function registerTaskTools(server: McpServer) {
             '',
             'Feature/Bug/Refactor tasks must go through Review before completion.',
             'Use request_review to submit this task for review first.',
-            'A linked Test task will be created and must pass before completing.',
             '==========================',
           ].join('\n');
           return { content: [{ type: 'text' as const, text: blockMsg }] };
@@ -203,8 +195,6 @@ export function registerTaskTools(server: McpServer) {
               '  5. complete_test_execution — mark execution as Passed or Failed',
               '  6. THEN call complete_task',
             ].join('\n');
-          } else if (reason.includes('linked Test task')) {
-            guidance = '\nThe linked Test task must be completed by the test agent before this task can be finished.';
           } else {
             guidance = '\nFix the issues above, then call complete_task again.';
           }
@@ -244,7 +234,7 @@ export function registerTaskTools(server: McpServer) {
 
   server.tool(
     'request_review',
-    'Submit a task for review. Moves task to Review status and ALWAYS creates a linked Test task for Feature/Bug/Refactor types (unless skipUiTesting is set). Use this instead of complete_task when done coding. Providing a testPlan with specific test steps is recommended but not required — a placeholder smoke test is created if omitted.',
+    'Submit a task for review. Moves task to Review status and registers all tests on the source task. Use this instead of complete_task when done coding. Provide backendTests[] for unit/integration tests and testPlan for UI test scenarios.',
     {
       taskId: z.number().describe('Task ID to submit for review'),
       commitSha: z.string().optional().describe('Git commit SHA'),
@@ -262,7 +252,7 @@ export function registerTaskTools(server: McpServer) {
             stepType: z.enum(['Setup', 'Action', 'Assertion', 'Teardown']).default('Action'),
           }))
         }))
-      }).optional().describe('Optional test plan - auto-creates a linked Test task for UI testing'),
+      }).optional().describe('Optional UI test plan — registered on the source task'),
       backendTests: z.array(z.object({
         name: z.string().describe('Test class or describe block name'),
         testFile: z.string().describe('Relative path to test file from project root'),

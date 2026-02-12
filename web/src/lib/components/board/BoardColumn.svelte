@@ -87,7 +87,7 @@
 
 	<!-- Cards -->
 	<div
-		class="flex-1 space-y-2 overflow-y-auto overflow-x-hidden px-2 pb-2"
+		class="flex-1 space-y-2 overflow-y-auto overflow-x-hidden px-2 pb-2 touch-pan-y"
 		data-column-scroll="true"
 		use:dndzone={{ items: tasks, type: 'task', dropTargetStyle: {}, dragDisabled: !dragEnabled }}
 		onconsider={(e) => onDndConsider?.(status, e)}

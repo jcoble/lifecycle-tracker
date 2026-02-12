@@ -301,6 +301,29 @@
 		window.removeEventListener('mouseup', handleResizeEnd);
 	}
 
+	function handleTouchResizeStart(e: TouchEvent) {
+		if (e.touches.length !== 1) return;
+		e.preventDefault();
+		resizing = true;
+		resizeStartY = e.touches[0].clientY;
+		resizeStartHeight = logPanelHeight;
+		window.addEventListener('touchmove', handleTouchResizeMove, { passive: false });
+		window.addEventListener('touchend', handleTouchResizeEnd);
+	}
+
+	function handleTouchResizeMove(e: TouchEvent) {
+		if (!resizing || e.touches.length !== 1) return;
+		e.preventDefault();
+		const delta = resizeStartY - e.touches[0].clientY;
+		logPanelHeight = Math.max(120, Math.min(resizeStartHeight + delta, 700));
+	}
+
+	function handleTouchResizeEnd() {
+		resizing = false;
+		window.removeEventListener('touchmove', handleTouchResizeMove);
+		window.removeEventListener('touchend', handleTouchResizeEnd);
+	}
+
 	function handleKeydown(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
 			if (lightboxUrl) { lightboxUrl = null; return; }
@@ -629,6 +652,7 @@
 					type="text"
 					bind:value={commentText}
 					onkeydown={(e) => { if (e.key === 'Enter') addComment(); }}
+					onfocus={(e) => { (e.target as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'center' }); }}
 					placeholder="Add a comment..."
 					class="flex-1 rounded-md border border-border bg-surface px-3 py-1.5 text-sm text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
 				/>
@@ -661,7 +685,8 @@
 			<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div
 				onmousedown={handleResizeStart}
-				class="h-1.5 cursor-row-resize border-t border-border bg-[#1a1a2e] hover:bg-accent/30 transition-colors flex items-center justify-center"
+				ontouchstart={handleTouchResizeStart}
+				class="h-3 sm:h-1.5 cursor-row-resize border-t border-border bg-[#1a1a2e] hover:bg-accent/30 transition-colors flex items-center justify-center touch-none"
 			>
 				<div class="w-8 h-0.5 rounded-full bg-text-tertiary/40"></div>
 			</div>

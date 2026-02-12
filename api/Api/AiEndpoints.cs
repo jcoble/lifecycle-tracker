@@ -504,144 +504,59 @@ public static class AiEndpoints
             if (req.PullRequestUrl is not null) task.PullRequestUrl = req.PullRequestUrl;
             await db.SaveChangesAsync();
 
-            // Always create a linked test task for Feature/Bug/Refactor tasks
-            // If testPlan is provided, use it; otherwise create a placeholder
-            object? testTaskInfo = null;
-            var requiresTestTask = task.Type == TaskType.Feature || task.Type == TaskType.Bug || task.Type == TaskType.Refactor;
-            if (requiresTestTask && !task.SkipUiTesting)
+            // Create test plan on the SOURCE task (no linked Test task)
+            int? uiTestPlanId = null;
+            var uiTestCount = 0;
+            if (req.TestPlan?.Tests is { Count: > 0 })
             {
-                var maxOrder = await db.Tasks
-                    .Where(x => x.Status == TaskStatus.Todo)
-                    .MaxAsync(x => (int?)x.OrderInColumn) ?? -1;
-                var testTask = new LifecycleTask
+                var testPlan = new TestPlan
                 {
-                    ProjectId = task.ProjectId,
-                    PhaseId = task.PhaseId,
-                    Title = $"Test: {task.Title}",
-                    Description = $"UI test task auto-generated from task #{id}",
-                    Status = TaskStatus.Todo,
-                    Priority = TaskPriority.P2,
-                    Type = TaskType.Test,
-                    Source = TaskSource.Claude,
-                    SourceTaskId = id,
-                    OrderInColumn = maxOrder + 1,
+                    TaskId = task.Id,
+                    Name = req.TestPlan.TestPlanName ?? $"Test plan for: {task.Title}",
+                    RequiredLevel = Enum.TryParse<TestLevel>(req.TestPlan.TestLevel, out var level) ? level : TestLevel.Smoke,
+                    Status = TestPlanStatus.Draft,
+                    Source = TestPlanSource.AI_Generated,
                     CreatedAt = DateTime.UtcNow,
                     UpdatedAt = DateTime.UtcNow
                 };
-                db.Tasks.Add(testTask);
-                await db.SaveChangesAsync();
-
-                TestPlan? testPlan = null;
-                if (req.TestPlan?.Tests is { Count: > 0 })
+                for (int ti = 0; ti < req.TestPlan.Tests.Count; ti++)
                 {
-                    testPlan = new TestPlan
+                    var t = req.TestPlan.Tests[ti];
+                    var test = new Test
                     {
-                        TaskId = testTask.Id,
-                        Name = req.TestPlan.TestPlanName ?? $"Test plan for: {task.Title}",
-                        RequiredLevel = Enum.TryParse<TestLevel>(req.TestPlan.TestLevel, out var level) ? level : TestLevel.Smoke,
-                        Status = TestPlanStatus.Draft,
-                        Source = TestPlanSource.AI_Generated,
-                        CreatedAt = DateTime.UtcNow,
-                        UpdatedAt = DateTime.UtcNow
-                    };
-                    for (int ti = 0; ti < req.TestPlan.Tests.Count; ti++)
-                    {
-                        var t = req.TestPlan.Tests[ti];
-                        var test = new Test
-                        {
-                            OrderIndex = ti,
-                            Name = t.Name,
-                            Description = t.Description,
-                            Type = Enum.TryParse<TestType>(t.Type, out var tt) ? tt : TestType.UI,
-                            Status = TestStatus.Created,
-                            Framework = t.Framework,
-                            CreatedAt = DateTime.UtcNow
-                        };
-                        if (t.Steps is { Count: > 0 })
-                        {
-                            for (int si = 0; si < t.Steps.Count; si++)
-                            {
-                                var s = t.Steps[si];
-                                test.Steps.Add(new TestStep
-                                {
-                                    OrderIndex = si,
-                                    StepType = Enum.TryParse<TestStepType>(s.StepType, out var st) ? st : TestStepType.Action,
-                                    Description = s.Description,
-                                    ExpectedResult = s.ExpectedResult,
-                                    AutomationCommand = s.AutomationCommand,
-                                    CreatedAt = DateTime.UtcNow
-                                });
-                            }
-                        }
-                        testPlan.Tests.Add(test);
-                    }
-                    db.TestPlans.Add(testPlan);
-                    await db.SaveChangesAsync();
-                }
-                else
-                {
-                    // Create a placeholder smoke test plan so the test agent has something to work with
-                    testPlan = new TestPlan
-                    {
-                        TaskId = testTask.Id,
-                        Name = $"Smoke test: {task.Title}",
-                        RequiredLevel = TestLevel.Smoke,
-                        Status = TestPlanStatus.Draft,
-                        Source = TestPlanSource.AI_Generated,
-                        CreatedAt = DateTime.UtcNow,
-                        UpdatedAt = DateTime.UtcNow
-                    };
-                    var smokeTest = new Test
-                    {
-                        OrderIndex = 0,
-                        Name = $"Verify: {task.Title}",
-                        Description = $"Smoke test auto-generated for task #{id}. Verify the feature works as described.",
-                        Type = TestType.UI,
+                        OrderIndex = ti,
+                        Name = t.Name,
+                        Description = t.Description,
+                        Type = Enum.TryParse<TestType>(t.Type, out var tt) ? tt : TestType.UI,
                         Status = TestStatus.Created,
+                        Framework = t.Framework,
                         CreatedAt = DateTime.UtcNow
                     };
-                    smokeTest.Steps.Add(new TestStep
+                    if (t.Steps is { Count: > 0 })
                     {
-                        OrderIndex = 0,
-                        StepType = TestStepType.Action,
-                        Description = $"Verify the changes from task #{id} ({task.Title}) work correctly in the UI",
-                        ExpectedResult = "Feature works as expected with no visual or functional regressions",
-                        CreatedAt = DateTime.UtcNow
-                    });
-                    testPlan.Tests.Add(smokeTest);
-                    db.TestPlans.Add(testPlan);
-                    await db.SaveChangesAsync();
+                        for (int si = 0; si < t.Steps.Count; si++)
+                        {
+                            var s = t.Steps[si];
+                            test.Steps.Add(new TestStep
+                            {
+                                OrderIndex = si,
+                                StepType = Enum.TryParse<TestStepType>(s.StepType, out var st) ? st : TestStepType.Action,
+                                Description = s.Description,
+                                ExpectedResult = s.ExpectedResult,
+                                AutomationCommand = s.AutomationCommand,
+                                CreatedAt = DateTime.UtcNow
+                            });
+                        }
+                    }
+                    testPlan.Tests.Add(test);
                 }
-
-                testTaskInfo = new { TestTaskId = testTask.Id, TestPlanId = testPlan?.Id, Title = testTask.Title };
-            }
-            else if (req.TestPlan is not null && !requiresTestTask)
-            {
-                // Non-required type but testPlan provided — still create it
-                var maxOrder = await db.Tasks
-                    .Where(x => x.Status == TaskStatus.Todo)
-                    .MaxAsync(x => (int?)x.OrderInColumn) ?? -1;
-                var testTask = new LifecycleTask
-                {
-                    ProjectId = task.ProjectId,
-                    PhaseId = task.PhaseId,
-                    Title = $"Test: {task.Title}",
-                    Description = $"UI test task auto-generated from task #{id}",
-                    Status = TaskStatus.Todo,
-                    Priority = TaskPriority.P2,
-                    Type = TaskType.Test,
-                    Source = TaskSource.Claude,
-                    SourceTaskId = id,
-                    OrderInColumn = maxOrder + 1,
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
-                };
-                db.Tasks.Add(testTask);
+                db.TestPlans.Add(testPlan);
                 await db.SaveChangesAsync();
-                testTaskInfo = new { TestTaskId = testTask.Id, TestPlanId = (int?)null, Title = testTask.Title };
+                uiTestPlanId = testPlan.Id;
+                uiTestCount = req.TestPlan.Tests.Count;
             }
 
-            // Create backend test plan on the SOURCE task (not the linked test task)
+            // Create backend test plan on the SOURCE task
             int? backendTestPlanId = null;
             var backendTestCount = 0;
             if (req.BackendTests is { Count: > 0 })
@@ -711,7 +626,8 @@ public static class AiEndpoints
             return Results.Ok(new
             {
                 task.Id, task.Title, Status = task.Status.ToString(),
-                TestTask = testTaskInfo,
+                TestPlanId = uiTestPlanId,
+                TestCount = uiTestCount,
                 BackendTestPlanId = backendTestPlanId,
                 BackendTestCount = backendTestCount,
                 TriggeredAgents = triggeredAgents ?? Array.Empty<object>()

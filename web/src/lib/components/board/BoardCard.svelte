@@ -7,7 +7,7 @@
 	import { formatDate } from '$lib/utils/date';
 	import { pasteScreenshotToTask } from '$lib/utils/clipboard';
 	import { extractPrLabel } from '$lib/utils/git';
-	import { Calendar, ClipboardPaste, GitBranch, GitPullRequest, Bot, Play, Square } from '@lucide/svelte';
+	import { Calendar, ClipboardPaste, GitBranch, GitPullRequest, Bot, Play, Square, Rocket } from '@lucide/svelte';
 	import { taskAgentMap } from '$lib/stores/agentActivity';
 	import { activeTestAgentTasks } from '$lib/stores/testAgents';
 	import { tasks as tasksApi } from '$lib/api/endpoints/tasks';
@@ -18,6 +18,7 @@
 	let showPaste = $state(false);
 	let spawnBusy = $state(false);
 	let stopBusy = $state(false);
+	let resolveBusy = $state(false);
 
 	async function handlePaste(e: MouseEvent) {
 		e.stopPropagation();
@@ -50,8 +51,25 @@
 		}
 	}
 
+	async function handleResolve(e: MouseEvent) {
+		e.stopPropagation();
+		if (resolveBusy) return;
+		resolveBusy = true;
+		try {
+			await tasksApi.resolveTask(task.id);
+		} catch {
+			// silent — detail panel shows log
+		} finally {
+			resolveBusy = false;
+		}
+	}
+
 	let showTestButton = $derived(
 		task.status === 'Review' || task.status === 'InProgress' || task.type === 'Test'
+	);
+	let showResolveButton = $derived(
+		(task.status === 'Backlog' || task.status === 'Todo') &&
+		task.type !== 'Test' && !assignedAgent && !hasActiveTestAgent
 	);
 </script>
 
@@ -90,6 +108,16 @@
 					onclick={handleStopAgent}
 				>
 					<Square class="h-3.5 w-3.5" />
+				</span>
+			{:else if showResolveButton}
+				<span
+					class="rounded p-0.5 text-text-tertiary transition-colors hover:bg-purple-500/20 hover:text-purple-400 {resolveBusy ? 'animate-pulse opacity-50' : ''}"
+					role="button"
+					tabindex="-1"
+					title="Resolve Task (TDD)"
+					onclick={handleResolve}
+				>
+					<Rocket class="h-3.5 w-3.5" />
 				</span>
 			{:else if showTestButton}
 				<span

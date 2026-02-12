@@ -6,6 +6,8 @@
 	import { milestones as milestonesApi } from '$lib/api/endpoints/milestones';
 	import { labels as labelsApi } from '$lib/api/endpoints/labels';
 	import { getCurrentProjectId } from '$lib/stores/project.svelte';
+	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
 
 	const queryClient = useQueryClient();
 
@@ -48,6 +50,15 @@
 	function handleTaskUpdated() {
 		queryClient.invalidateQueries({ queryKey: ['tasks'] });
 	}
+
+	// Auto-redirect to list view on mobile (unless user explicitly prefers kanban)
+	onMount(() => {
+		const isMobile = window.matchMedia('(max-width: 768px)').matches;
+		const pref = localStorage.getItem('lifecycle-board-view');
+		if (isMobile && pref !== 'kanban') {
+			goto('/board/list', { replaceState: true });
+		}
+	});
 </script>
 
 <svelte:head>

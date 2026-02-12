@@ -461,10 +461,103 @@ public static class TaskEndpoints
             }
         });
 
+        // Resolve task — spawn an orchestrator agent to implement the task end-to-end
+        group.MapPost("/{taskId:int}/resolve", async (int taskId, LifecycleDbContext db, SseService sse) =>
+        {
+            var task = await db.Tasks.FindAsync(taskId);
+            if (task is null) return Results.NotFound(new { Error = $"Task #{taskId} not found" });
+
+            // Get project settings for repository root
+            var project = await db.Projects
+                .FirstOrDefaultAsync(p => p.Id == (task.ProjectId != 0 ? task.ProjectId : 1));
+            var settings = new Dictionary<string, string>();
+            if (!string.IsNullOrEmpty(project?.Settings))
+            {
+                try { settings = JsonSerializer.Deserialize<Dictionary<string, string>>(project.Settings) ?? settings; }
+                catch { /* ignore malformed settings */ }
+            }
+            var repoRoot = settings.GetValueOrDefault("repositoryRoot", "");
+            var promptFile = Path.Combine(repoRoot, ".claude/prompts/resolve-agent-system.md");
+
+            if (string.IsNullOrEmpty(repoRoot) || !Directory.Exists(repoRoot))
+                return Results.BadRequest(new { Error = "Repository root not configured or not found. Set 'repositoryRoot' in project settings." });
+
+            // Use resolve prompt if it exists, otherwise fall back to the slash command
+            var systemPromptArg = File.Exists(promptFile)
+                ? $"--system-prompt file:{promptFile}"
+                : "";
+
+            // Check if claude CLI is available
+            try
+            {
+                var which = Process.Start(new ProcessStartInfo
+                {
+                    FileName = "which",
+                    Arguments = "claude",
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                });
+                which?.WaitForExit(3000);
+                if (which?.ExitCode != 0)
+                    return Results.BadRequest(new { Error = "claude CLI not found on this machine" });
+            }
+            catch
+            {
+                return Results.BadRequest(new { Error = "Unable to check for claude CLI" });
+            }
+
+            var prompt = $"/resolve-task {taskId}";
+            var logFile = $"/tmp/resolve-agent-{taskId}.log";
+            var pidFile = $"/tmp/resolve-agent-{taskId}.pid";
+
+            // Spawn claude in background
+            var psi = new ProcessStartInfo
+            {
+                FileName = "bash",
+                Arguments = $"-c \"claude -p \\\"{prompt}\\\" {systemPromptArg} --dangerously-skip-permissions --model sonnet --output-format stream-json --add-dir {repoRoot} >> {logFile} 2>&1 & echo $! > {pidFile}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+            };
+
+            try
+            {
+                var process = Process.Start(psi);
+                process?.WaitForExit(5000);
+                await sse.BroadcastAsync("agent:spawned", new { TaskId = taskId, Type = "resolve" });
+
+                return Results.Ok(new
+                {
+                    Message = $"Resolve agent spawned for task #{taskId}",
+                    TaskId = taskId,
+                    LogFile = logFile
+                });
+            }
+            catch (Exception ex)
+            {
+                return Results.Problem($"Failed to spawn resolve agent: {ex.Message}");
+            }
+        });
+
         // Read agent log output for a task (polling endpoint, parses stream-json)
+        // Checks both test-agent and resolve-agent logs, using whichever is newer
         group.MapGet("/{taskId:int}/agent-log", (int taskId, int? offset) =>
         {
-            var logFile = $"/tmp/test-agent-{taskId}.log";
+            var testLog = $"/tmp/test-agent-{taskId}.log";
+            var resolveLog = $"/tmp/resolve-agent-{taskId}.log";
+            // Pick the most recently modified log file
+            var testExists = File.Exists(testLog);
+            var resolveExists = File.Exists(resolveLog);
+            string logFile;
+            if (testExists && resolveExists)
+                logFile = File.GetLastWriteTimeUtc(resolveLog) > File.GetLastWriteTimeUtc(testLog) ? resolveLog : testLog;
+            else if (resolveExists)
+                logFile = resolveLog;
+            else
+                logFile = testLog;
+
             if (!File.Exists(logFile))
                 return Results.Ok(new { lines = Array.Empty<string>(), totalLines = 0, running = false, sessionId = (string?)null });
 
@@ -505,26 +598,37 @@ public static class TaskEndpoints
         // Stop a running test agent for a task
         group.MapPost("/{taskId:int}/stop-agent", async (int taskId, SseService sse) =>
         {
-            var pidFile = $"/tmp/test-agent-{taskId}.pid";
-            if (!File.Exists(pidFile))
-                return Results.NotFound(new { error = "No agent PID found for this task" });
+            // Check both test-agent and resolve-agent PID files
+            var pidFiles = new[] { $"/tmp/test-agent-{taskId}.pid", $"/tmp/resolve-agent-{taskId}.pid" };
+            var found = false;
 
-            var pidText = File.ReadAllText(pidFile).Trim();
-            if (int.TryParse(pidText, out var pid))
+            foreach (var pidFile in pidFiles)
             {
-                try
+                if (!File.Exists(pidFile)) continue;
+                found = true;
+                var pidText = File.ReadAllText(pidFile).Trim();
+                if (int.TryParse(pidText, out var pid))
                 {
-                    var proc = Process.GetProcessById(pid);
-                    proc.Kill(entireProcessTree: true);
+                    try
+                    {
+                        var proc = Process.GetProcessById(pid);
+                        proc.Kill(entireProcessTree: true);
+                    }
+                    catch { /* process already exited */ }
                 }
-                catch { /* process already exited */ }
+                try { File.Delete(pidFile); } catch { }
             }
 
-            try { File.Delete(pidFile); } catch { }
+            if (!found)
+                return Results.NotFound(new { error = "No agent PID found for this task" });
 
-            // Append stop message to log
-            var logFile = $"/tmp/test-agent-{taskId}.log";
-            try { File.AppendAllText(logFile, $"\n[{DateTime.UtcNow:o}] Agent stopped by user\n"); } catch { }
+            // Append stop message to whichever log exists
+            var logFiles = new[] { $"/tmp/test-agent-{taskId}.log", $"/tmp/resolve-agent-{taskId}.log" };
+            foreach (var logFile in logFiles)
+            {
+                if (File.Exists(logFile))
+                    try { File.AppendAllText(logFile, $"\n[{DateTime.UtcNow:o}] Agent stopped by user\n"); } catch { }
+            }
 
             await sse.BroadcastAsync("agent:stopped", new { TaskId = taskId });
 
@@ -846,8 +950,8 @@ public static class TaskTransitionValidator
 
     /// <summary>
     /// API-level enforcement: Feature/Bug/Refactor tasks moving to Done must have
-    /// a linked Test task that is Done (unless skipUiTesting is set).
-    /// This runs at the API layer so it cannot be bypassed by skipping MCP tools or hooks.
+    /// all tests on THIS task passing (no linked Test task requirement).
+    /// Test tasks still need a passed execution.
     /// </summary>
     public static async Task<(bool canComplete, string? reason)> CanCompleteDone(
         LifecycleTask task, LifecycleDbContext db)
@@ -856,27 +960,37 @@ public static class TaskTransitionValidator
         if (task.Type == TaskType.Test)
             return await CanCompleteTestTask(task, db);
 
-        // Only enforce linked-test-task requirement on Feature/Bug/Refactor
+        // Only enforce test checks on Feature/Bug/Refactor
         if (!ReviewRequiredTypes.Contains(task.Type))
             return (true, null);
 
-        // Skip if task has skipUiTesting flag
-        if (task.SkipUiTesting)
-            return (true, null);
-
-        // Must have at least one linked Test task that is Done
-        var linkedTestTasks = await db.Tasks
-            .Where(t => t.SourceTaskId == task.Id && t.Type == TaskType.Test)
-            .Select(t => new { t.Id, t.Status })
+        // Check all tests on THIS task (from all test plans)
+        var tests = await db.Tests
+            .Where(t => t.TestPlan.TaskId == task.Id)
+            .Select(t => new { t.Id, t.Name, t.Status, t.Type })
             .ToListAsync();
 
-        if (linkedTestTasks.Count == 0)
-            return (false, $"Task #{task.Id} requires a linked Test task before completion. Use request_review to create one.");
+        // If no tests exist, allow completion (no test requirement by default)
+        if (tests.Count == 0)
+            return (true, null);
 
-        if (!linkedTestTasks.Any(t => t.Status == TaskStatus.Done))
+        // Skip UI-type test checks if skipUiTesting is set
+        var testsToCheck = task.SkipUiTesting
+            ? tests.Where(t => t.Type != TestType.UI).ToList()
+            : tests;
+
+        var failing = testsToCheck.Where(t => t.Status == TestStatus.Failing).ToList();
+        if (failing.Count > 0)
         {
-            var statuses = string.Join(", ", linkedTestTasks.Select(t => $"#{t.Id}: {t.Status}"));
-            return (false, $"Task #{task.Id} has linked Test task(s) but none are Done ({statuses}). The Test task must be completed first.");
+            var names = string.Join(", ", failing.Select(t => t.Name));
+            return (false, $"Task #{task.Id} has {failing.Count} failing test(s): {names}. Fix them before completing.");
+        }
+
+        var notRun = testsToCheck.Where(t => t.Status == TestStatus.Created).ToList();
+        if (notRun.Count > 0)
+        {
+            var names = string.Join(", ", notRun.Select(t => t.Name));
+            return (false, $"Task #{task.Id} has {notRun.Count} test(s) not yet run: {names}. Run all tests before completing.");
         }
 
         return (true, null);

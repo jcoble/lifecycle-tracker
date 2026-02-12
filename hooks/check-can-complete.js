@@ -3,14 +3,14 @@
 /**
  * PreToolUse hook for complete_task enforcement.
  *
- * New workflow:
+ * Workflow:
  * 1. Docs/Infra/Research tasks → ALLOW (exempt)
  * 2. Test tasks → ALLOW (test agent completes these after browser testing)
  * 3. Feature/Bug/Refactor tasks:
  *    - Must be in Review status (not InProgress) → BLOCK if not
  *    - If skipUiTesting=true → ALLOW
  *    - All non-UI tests on this task must be Passing → BLOCK if failing/unrun
- *    - Must have a linked Test task that is Done → BLOCK if missing or incomplete
+ *    - API-level CanCompleteDone checks all tests on this task (no linked Test task needed)
  *
  * Exit code 2 = block the tool call (with reason on stderr).
  * Exit code 0 = allow the tool call.
@@ -111,41 +111,8 @@ async function main() {
         process.exit(2);
       }
 
-      // Check for linked Test task that is Done
-      let linkedTests = [];
-      try {
-        const linkedRes = await fetch(`${API_URL}/api/ai/tasks/${taskId}/linked-test-tasks`, { headers });
-        if (linkedRes.ok) {
-          linkedTests = await linkedRes.json();
-        }
-      } catch {
-        // If we can't check linked tests, block to be safe
-        process.stderr.write(
-          `BLOCKED: Could not verify linked test tasks for task #${taskId}.\n` +
-          `Ensure the lifecycle API is running.\n`
-        );
-        process.exit(2);
-      }
-
-      if (!Array.isArray(linkedTests) || linkedTests.length === 0) {
-        process.stderr.write(
-          `BLOCKED: Task #${taskId} has no linked Test task.\n\n` +
-          `Use request_review to submit for review — it auto-creates a linked Test task.\n` +
-          `Or set skipUiTesting=true on the task to bypass this requirement.\n`
-        );
-        process.exit(2);
-      }
-
-      const doneTests = linkedTests.filter(t => t.status === 'Done');
-      if (doneTests.length === 0) {
-        const statuses = linkedTests.map(t => `#${t.id}: ${t.status}`).join(', ');
-        process.stderr.write(
-          `BLOCKED: Task #${taskId} has linked Test task(s) but none are Done.\n` +
-          `Linked test tasks: ${statuses}\n\n` +
-          `The test agent must complete the linked Test task before this task can be completed.\n`
-        );
-        process.exit(2);
-      }
+      // All test checks are handled by the API-level CanCompleteDone validator
+      // (checks all tests on THIS task are passing — no linked Test task needed)
     }
 
     // If RequiredTestLevel is set, also check can-complete API

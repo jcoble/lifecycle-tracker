@@ -29,4 +29,6 @@ export const tasks = {
 		),
 	stopAgent: (taskId: number) =>
 		api.post<{ message: string }>(`/tasks/${taskId}/stop-agent`, {}),
+	resolveTask: (taskId: number) =>
+		api.post<{ message: string; taskId: number; logFile: string }>(`/tasks/${taskId}/resolve`, {}),
 };
