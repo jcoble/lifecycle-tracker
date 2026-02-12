@@ -496,6 +496,11 @@ public static class AiEndpoints
             var (isValid, reason) = TaskTransitionValidator.IsValid(task.Status, TaskStatus.Review);
             if (!isValid) return Results.BadRequest(new { Error = reason });
 
+            // Enforce: Feature/Bug/Refactor tasks must include tests when requesting review
+            var requiresTests = new[] { TaskType.Feature, TaskType.Bug, TaskType.Refactor }.Contains(task.Type);
+            if (requiresTests && (req.BackendTests is null or { Count: 0 }) && (req.TestPlan?.Tests is null or { Count: 0 }))
+                return Results.BadRequest(new { Error = "Feature/Bug/Refactor tasks require at least one test. Provide backendTests[] (unit/integration tests) and/or testPlan (UI test scenarios) when requesting review." });
+
             var oldStatus = task.Status;
             task.Status = TaskStatus.Review;
             task.UpdatedAt = DateTime.UtcNow;

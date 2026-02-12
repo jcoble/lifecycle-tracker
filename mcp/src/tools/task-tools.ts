@@ -176,7 +176,7 @@ export function registerTaskTools(server: McpServer) {
       // Check test enforcement - skip UI checks
       try {
         const canComplete = await api.get<{ canComplete: boolean; reason: string | null }>(
-          `/tasks/${taskId}/can-complete?skipUiCheck=true`
+          `/tasks/${taskId}/can-complete`
         );
         if (!canComplete.canComplete) {
           // Give specific guidance based on what's blocking
@@ -234,7 +234,7 @@ export function registerTaskTools(server: McpServer) {
 
   server.tool(
     'request_review',
-    'Submit a task for review. Moves task to Review status and registers all tests on the source task. Use this instead of complete_task when done coding. Provide backendTests[] for unit/integration tests and testPlan for UI test scenarios.',
+    'Submit a task for review. Moves task to Review status. REQUIRES at least one test source: backendTests[] (unit/integration) and/or testPlan (UI scenarios). The API will reject requests with zero tests for Feature/Bug/Refactor tasks.',
     {
       taskId: z.number().describe('Task ID to submit for review'),
       commitSha: z.string().optional().describe('Git commit SHA'),
@@ -252,13 +252,13 @@ export function registerTaskTools(server: McpServer) {
             stepType: z.enum(['Setup', 'Action', 'Assertion', 'Teardown']).default('Action'),
           }))
         }))
-      }).optional().describe('Optional UI test plan — registered on the source task'),
+      }).optional().describe('UI test plan with steps for agent-browser testing. REQUIRED for tasks that affect the UI.'),
       backendTests: z.array(z.object({
         name: z.string().describe('Test class or describe block name'),
         testFile: z.string().describe('Relative path to test file from project root'),
         type: z.enum(['Unit', 'Integration']).default('Unit'),
         framework: z.string().optional().describe('Test framework: xUnit, Vitest, etc.'),
-      })).optional().describe('Backend test files written during implementation — auto-registered on the source task'),
+      })).optional().describe('Backend test files written during implementation. REQUIRED for Feature/Bug/Refactor tasks — provide at least backendTests OR testPlan.'),
     },
     async ({ taskId, commitSha, gitBranch, prUrl, testPlan, backendTests }) => {
       setLastActivity(`Requesting review for task #${taskId}`);

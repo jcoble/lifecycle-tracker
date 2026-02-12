@@ -970,9 +970,9 @@ public static class TaskTransitionValidator
             .Select(t => new { t.Id, t.Name, t.Status, t.Type })
             .ToListAsync();
 
-        // If no tests exist, allow completion (no test requirement by default)
+        // Feature/Bug/Refactor tasks MUST have tests registered via request_review
         if (tests.Count == 0)
-            return (true, null);
+            return (false, $"Task #{task.Id} has no tests registered. Call request_review with backendTests and/or testPlan before completing.");
 
         // Skip UI-type test checks if skipUiTesting is set
         var testsToCheck = task.SkipUiTesting
