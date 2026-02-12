@@ -14,6 +14,7 @@
 	const tasksQuery = createQuery(() => ({
 		queryKey: ['tasks', getCurrentProjectId()],
 		queryFn: () => tasksApi.list({ projectId: String(getCurrentProjectId()) }),
+		refetchInterval: 10000, // Fallback polling every 10s in case SSE drops
 	}));
 
 	// Load milestones for the current project

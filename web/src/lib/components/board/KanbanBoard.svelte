@@ -20,7 +20,9 @@
 		onTaskUpdated?: () => void;
 	} = $props();
 
-	let selectedTask = $state<Task | null>(null);
+	let selectedTaskId = $state<number | null>(null);
+	// Derive selectedTask from current tasks prop so it stays in sync when data refetches
+	let selectedTask = $derived(selectedTaskId ? tasks.find(t => t.id === selectedTaskId) ?? null : null);
 	let filters = $state<Record<string, string>>({});
 	let boardScrollEl = $state<HTMLDivElement | null>(null);
 	let archiveNotice = $state<string | null>(null);
@@ -176,11 +178,10 @@
 	}
 
 	function handleCardClick(task: Task) {
-		selectedTask = task;
+		selectedTaskId = task.id;
 	}
 
-	function handleTaskUpdate(updated: Task) {
-		selectedTask = updated;
+	function handleTaskUpdate(_updated: Task) {
 		onTaskUpdated?.();
 	}
 
@@ -275,8 +276,8 @@
 	<TaskDetail
 		task={selectedTask}
 		{phases}
-		onclose={() => (selectedTask = null)}
+		onclose={() => (selectedTaskId = null)}
 		onupdate={handleTaskUpdate}
-		ondelete={() => { selectedTask = null; onTaskUpdated?.(); }}
+		ondelete={() => { selectedTaskId = null; onTaskUpdated?.(); }}
 	/>
 {/if}

@@ -109,6 +109,9 @@
 
 		const invalidateAll = () => {
 			queryClient.invalidateQueries({ queryKey: ['tasks'] });
+			queryClient.invalidateQueries({ queryKey: ['phases'] });
+			queryClient.invalidateQueries({ queryKey: ['milestones'] });
+			queryClient.invalidateQueries({ queryKey: ['metrics'] });
 			queryClient.invalidateQueries({ queryKey: ['dashboard'] });
 		};
 
@@ -116,14 +119,8 @@
 		eventSource.addEventListener('task:updated', invalidateAll);
 		eventSource.addEventListener('task:moved', invalidateAll);
 		eventSource.addEventListener('task:deleted', invalidateAll);
-		eventSource.addEventListener('phase:updated', () => {
-			queryClient.invalidateQueries({ queryKey: ['phases'] });
-			queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-		});
-		eventSource.addEventListener('milestone:updated', () => {
-			queryClient.invalidateQueries({ queryKey: ['milestones'] });
-			queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-		});
+		eventSource.addEventListener('phase:updated', invalidateAll);
+		eventSource.addEventListener('milestone:updated', invalidateAll);
 		eventSource.addEventListener('comment:created', () => {
 			queryClient.invalidateQueries({ queryKey: ['comments'] });
 		});
@@ -131,6 +128,11 @@
 			queryClient.invalidateQueries({ queryKey: ['activity'] });
 			queryClient.invalidateQueries({ queryKey: ['dashboard'] });
 		});
+
+		// Log SSE connection issues for debugging
+		eventSource.onerror = () => {
+			console.warn('[SSE] Connection error — EventSource will auto-reconnect');
+		};
 
 		// Agent activity SSE events
 		eventSource.addEventListener('agent:spawned', (e) => {
