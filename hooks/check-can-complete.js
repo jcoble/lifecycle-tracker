@@ -85,9 +85,17 @@ async function main() {
         process.exit(2);
       }
 
-      // If skipUiTesting, allow
-      if (task.skipUiTesting) {
-        process.exit(0);
+      // skipUiTesting only skips UI test checks, still check non-UI tests
+
+      // Enforce: must have at least one test
+      const allTests = task.tests || [];
+      if (allTests.length === 0) {
+        process.stderr.write(
+          `BLOCKED: Task #${taskId} "${task.title}" has no tests registered.\n\n` +
+          `Feature/Bug/Refactor tasks must have tests. Use request_review with\n` +
+          `backendTests[] and/or testPlan to register tests before completing.\n`
+        );
+        process.exit(2);
       }
 
       // Check non-UI tests are passing
