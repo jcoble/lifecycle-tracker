@@ -1,13 +1,11 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { readdirSync, statSync } from 'fs';
-import { join } from 'path';
 import { api, getActiveProjectId } from '../api-client.js';
 import { setLastActivity } from '../index.js';
+import { discoverSessionLogPath } from '../session-log.js';
 
 const AGENT_NAME = process.env.LIFECYCLE_AGENT_NAME || '';
 let _resolvedTeamMemberId: number | null = null;
-let _discoveredLogPath: string | null = null;
 
 async function getMyTeamMemberId(): Promise<number | null> {
   if (_resolvedTeamMemberId) return _resolvedTeamMemberId;
@@ -17,31 +15,6 @@ async function getMyTeamMemberId(): Promise<number | null> {
   const me = members.find((m: any) => m.agentName === AGENT_NAME);
   if (me) _resolvedTeamMemberId = me.id;
   return _resolvedTeamMemberId;
-}
-
-function discoverSessionLogPath(): string | null {
-  if (_discoveredLogPath) return _discoveredLogPath;
-  try {
-    const cwd = process.cwd();
-    // Claude Code encodes cwd: /Users/foo/bar → -Users-foo-bar
-    const encoded = cwd.replace(/\//g, '-');
-    const homeDir = process.env.HOME || process.env.USERPROFILE || '';
-    const projectsDir = join(homeDir, '.claude', 'projects', encoded);
-    const files = readdirSync(projectsDir)
-      .filter(f => f.endsWith('.jsonl'))
-      .map(f => ({
-        name: f,
-        path: join(projectsDir, f),
-        mtime: statSync(join(projectsDir, f)).mtimeMs,
-      }))
-      .sort((a, b) => b.mtime - a.mtime);
-    if (files.length > 0) {
-      _discoveredLogPath = files[0].path;
-    }
-  } catch {
-    // Directory doesn't exist or not accessible
-  }
-  return _discoveredLogPath;
 }
 
 export function registerTeamTools(server: McpServer) {

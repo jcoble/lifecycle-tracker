@@ -8,6 +8,7 @@ import { registerTeamTools } from './tools/team-tools.js';
 import { registerMilestoneTools } from './tools/milestone-tools.js';
 import { registerTestPlanTools } from './tools/test-plan-tools.js';
 import { api } from './api-client.js';
+import { discoverSessionLogPath } from './session-log.js';
 
 const AGENT_NAME = process.env.LIFECYCLE_AGENT_NAME || '';
 const AGENT_MODEL = process.env.LIFECYCLE_AGENT_MODEL || '';
@@ -48,8 +49,10 @@ async function autoRegister() {
 async function sendHeartbeat() {
   if (!registeredTeamMemberId) return;
   try {
+    const logPath = discoverSessionLogPath();
     await api.post(`/teams/${registeredTeamMemberId}/heartbeat`, {
       activity: lastActivity,
+      sessionLogPath: logPath,
     });
   } catch {
     // Heartbeat failure is non-fatal
