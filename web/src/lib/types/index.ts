@@ -352,9 +352,31 @@ export interface MonitorAgent {
 	lastHeartbeat: string | null;
 	tokensUsed: number | null;
 	latestPlan: { fileName: string; updatedAt: string } | null;
+	hasOutput: boolean;
 	isStale: boolean;
 }
 
 export interface MonitorData {
 	agents: MonitorAgent[];
+}
+
+export interface TranscriptContentItem {
+	type: 'text' | 'tool_use' | 'tool_result';
+	text?: string;
+	name?: string;
+	input_summary?: string;
+	content?: string;
+	is_error?: boolean;
+}
+
+export interface TranscriptEntry {
+	uuid: string;
+	index: number;
+	timestamp?: string;
+	role: 'user' | 'assistant' | 'system';
+	content: TranscriptContentItem[];
+}
+
+export interface TranscriptOutput {
+	entries: TranscriptEntry[];
 }

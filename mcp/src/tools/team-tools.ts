@@ -1,10 +1,13 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { readdirSync, statSync } from 'fs';
+import { join } from 'path';
 import { api, getActiveProjectId } from '../api-client.js';
 import { setLastActivity } from '../index.js';
 
 const AGENT_NAME = process.env.LIFECYCLE_AGENT_NAME || '';
 let _resolvedTeamMemberId: number | null = null;
+let _discoveredLogPath: string | null = null;
 
 async function getMyTeamMemberId(): Promise<number | null> {
   if (_resolvedTeamMemberId) return _resolvedTeamMemberId;
@@ -14,6 +17,31 @@ async function getMyTeamMemberId(): Promise<number | null> {
   const me = members.find((m: any) => m.agentName === AGENT_NAME);
   if (me) _resolvedTeamMemberId = me.id;
   return _resolvedTeamMemberId;
+}
+
+function discoverSessionLogPath(): string | null {
+  if (_discoveredLogPath) return _discoveredLogPath;
+  try {
+    const cwd = process.cwd();
+    // Claude Code encodes cwd: /Users/foo/bar → -Users-foo-bar
+    const encoded = cwd.replace(/\//g, '-');
+    const homeDir = process.env.HOME || process.env.USERPROFILE || '';
+    const projectsDir = join(homeDir, '.claude', 'projects', encoded);
+    const files = readdirSync(projectsDir)
+      .filter(f => f.endsWith('.jsonl'))
+      .map(f => ({
+        name: f,
+        path: join(projectsDir, f),
+        mtime: statSync(join(projectsDir, f)).mtimeMs,
+      }))
+      .sort((a, b) => b.mtime - a.mtime);
+    if (files.length > 0) {
+      _discoveredLogPath = files[0].path;
+    }
+  } catch {
+    // Directory doesn't exist or not accessible
+  }
+  return _discoveredLogPath;
 }
 
 export function registerTeamTools(server: McpServer) {
@@ -133,15 +161,22 @@ export function registerTeamTools(server: McpServer) {
         .describe('Running token count for this session'),
       planFileName: z.string().optional().describe('Plan file name if agent has an active plan'),
       planContent: z.string().optional().describe('Full plan markdown content'),
+      sessionLogPath: z.string().optional()
+        .describe('Path to Claude Code JSONL transcript. Auto-discovered if omitted.'),
     },
-    async ({ teamMemberId, activity, tokensUsed, planFileName, planContent }) => {
+    async ({ teamMemberId, activity, tokensUsed, planFileName, planContent, sessionLogPath }) => {
       setLastActivity(activity);
       const memberId = teamMemberId ?? await getMyTeamMemberId();
       if (!memberId) {
         return { content: [{ type: 'text' as const,
           text: 'Error: teamMemberId required. Set LIFECYCLE_AGENT_NAME env var for auto-detection, or pass teamMemberId explicitly.' }] };
       }
-      const result = await api.post(`/teams/${memberId}/heartbeat`, { activity, tokensUsed, planFileName, planContent });
+      // Auto-discover log path if not provided
+      const logPath = sessionLogPath ?? discoverSessionLogPath();
+      const result = await api.post(`/teams/${memberId}/heartbeat`, {
+        activity, tokensUsed, planFileName, planContent,
+        sessionLogPath: logPath,
+      });
       return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     }
   );

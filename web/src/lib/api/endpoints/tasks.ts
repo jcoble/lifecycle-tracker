@@ -1,4 +1,4 @@
-import type { Task } from '$lib/types';
+import type { Task, TranscriptEntry } from '$lib/types';
 import { api } from '../client';
 
 export const tasks = {
@@ -31,4 +31,8 @@ export const tasks = {
 		api.post<{ message: string }>(`/tasks/${taskId}/stop-agent`, {}),
 	resolveTask: (taskId: number) =>
 		api.post<{ message: string; taskId: number; logFile: string }>(`/tasks/${taskId}/resolve`, {}),
+	getTranscript: (taskId: number, since = 0) =>
+		api.get<{ entries: TranscriptEntry[]; totalLines: number; running: boolean }>(
+			`/tasks/${taskId}/transcript?since=${since}`
+		),
 };

@@ -117,6 +117,10 @@ POST   /api/agents/escalations       { projectId, description, taskId? }
 GET    /api/events?projectId=1       SSE stream (task:created, task:updated, etc.)
 ```
 
+## Local Dev Rules
+
+- **Always bind to `localhost`** — never use `0.0.0.0` or `127.0.0.1` when starting services locally. Use `--urls http://localhost:PORT`.
+
 ## Server Management
 
 ```bash

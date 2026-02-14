@@ -106,7 +106,8 @@ public static class TeamEndpoints
                 TeamMemberId = id,
                 SessionId = req.SessionId ?? Guid.NewGuid().ToString(),
                 Status = "Active",
-                SpawnedAt = DateTime.UtcNow
+                SpawnedAt = DateTime.UtcNow,
+                SessionLogPath = req.SessionLogPath
             };
 
             db.AgentSessions.Add(session);
@@ -175,6 +176,8 @@ public static class TeamEndpoints
                 activeSession.CurrentActivity = req.Activity;
             if (req.TokensUsed.HasValue)
                 activeSession.TokensUsed = req.TokensUsed;
+            if (req.SessionLogPath is not null)
+                activeSession.SessionLogPath = req.SessionLogPath;
 
             if (req.PlanContent is not null)
             {
@@ -517,6 +520,7 @@ public static class TeamEndpoints
                         FileName = session.LatestPlanFileName,
                         UpdatedAt = session.LatestPlanUpdatedAt
                     },
+                    HasOutput = session?.SessionLogPath is not null,
                     IsStale = m.Status == "Active" && lastHb.HasValue && lastHb < staleThreshold
                 };
             }).ToList();
@@ -597,6 +601,134 @@ public static class TeamEndpoints
                 member.Role,
                 IsNew = true
             });
+        });
+
+        // Stream parsed JSONL transcript for an agent
+        group.MapGet("/{id:int}/output", async (int id, string? since, LifecycleDbContext db) =>
+        {
+            var session = await db.AgentSessions
+                .Where(s => s.TeamMemberId == id)
+                .OrderByDescending(s => s.SpawnedAt)
+                .FirstOrDefaultAsync();
+
+            if (session?.SessionLogPath is null || !System.IO.File.Exists(session.SessionLogPath))
+                return Results.Ok(new { entries = Array.Empty<object>() });
+
+            var sinceTime = since is not null ? DateTime.Parse(since, null, System.Globalization.DateTimeStyles.RoundtripKind) : (DateTime?)null;
+            var entries = new List<object>();
+
+            using var stream = new FileStream(session.SessionLogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var reader = new StreamReader(stream);
+
+            string? line;
+            while ((line = await reader.ReadLineAsync()) is not null)
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+
+                try
+                {
+                    using var doc = JsonDocument.Parse(line);
+                    var root = doc.RootElement;
+
+                    var type = root.GetProperty("type").GetString();
+                    if (type != "user" && type != "assistant") continue;
+
+                    var timestamp = root.TryGetProperty("timestamp", out var ts) ? ts.GetString() : null;
+
+                    if (sinceTime.HasValue && timestamp is not null)
+                    {
+                        if (DateTime.Parse(timestamp, null, System.Globalization.DateTimeStyles.RoundtripKind) <= sinceTime.Value)
+                            continue;
+                    }
+
+                    var uuid = root.TryGetProperty("uuid", out var u) ? u.GetString() : null;
+                    var message = root.GetProperty("message");
+                    var role = message.TryGetProperty("role", out var r) ? r.GetString() : type;
+                    var contentArr = message.GetProperty("content");
+
+                    var contentItems = new List<object>();
+                    if (contentArr.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var item in contentArr.EnumerateArray())
+                        {
+                            var itemType = item.TryGetProperty("type", out var it) ? it.GetString() : "text";
+
+                            if (itemType == "text")
+                            {
+                                var text = item.TryGetProperty("text", out var t) ? t.GetString() : "";
+                                contentItems.Add(new { type = "text", text });
+                            }
+                            else if (itemType == "tool_use")
+                            {
+                                var name = item.TryGetProperty("name", out var n) ? n.GetString() : "unknown";
+                                // Summarize input: take first-level keys and short values
+                                var inputSummary = "";
+                                if (item.TryGetProperty("input", out var inp) && inp.ValueKind == JsonValueKind.Object)
+                                {
+                                    var parts = new List<string>();
+                                    foreach (var prop in inp.EnumerateObject())
+                                    {
+                                        var val = prop.Value.ValueKind switch
+                                        {
+                                            JsonValueKind.String => prop.Value.GetString()?.Length > 80
+                                                ? prop.Value.GetString()![..80] + "..."
+                                                : prop.Value.GetString(),
+                                            JsonValueKind.Number => prop.Value.GetRawText(),
+                                            JsonValueKind.True or JsonValueKind.False => prop.Value.GetRawText(),
+                                            _ => $"({prop.Value.ValueKind})"
+                                        };
+                                        parts.Add($"{prop.Name}: {val}");
+                                    }
+                                    inputSummary = string.Join(", ", parts);
+                                }
+                                contentItems.Add(new { type = "tool_use", name, input_summary = inputSummary });
+                            }
+                            else if (itemType == "tool_result")
+                            {
+                                // Summarize tool results: truncate long content
+                                var resultContent = "";
+                                if (item.TryGetProperty("content", out var tc))
+                                {
+                                    if (tc.ValueKind == JsonValueKind.String)
+                                    {
+                                        resultContent = tc.GetString()?.Length > 200
+                                            ? tc.GetString()![..200] + "..."
+                                            : tc.GetString() ?? "";
+                                    }
+                                    else if (tc.ValueKind == JsonValueKind.Array)
+                                    {
+                                        // tool_result content can be array of {type:"text",text:"..."}
+                                        var texts = new List<string>();
+                                        foreach (var rc in tc.EnumerateArray())
+                                        {
+                                            if (rc.TryGetProperty("text", out var txt))
+                                            {
+                                                var s = txt.GetString() ?? "";
+                                                texts.Add(s.Length > 200 ? s[..200] + "..." : s);
+                                            }
+                                        }
+                                        resultContent = string.Join("\n", texts);
+                                    }
+                                }
+                                var isError = item.TryGetProperty("is_error", out var ie) && ie.GetBoolean();
+                                contentItems.Add(new { type = "tool_result", content = resultContent, is_error = isError });
+                            }
+                        }
+                    }
+                    else if (contentArr.ValueKind == JsonValueKind.String)
+                    {
+                        contentItems.Add(new { type = "text", text = contentArr.GetString() ?? "" });
+                    }
+
+                    entries.Add(new { uuid, timestamp, role, content = contentItems });
+                }
+                catch
+                {
+                    // Skip malformed lines
+                }
+            }
+
+            return Results.Ok(new { entries });
         });
 
         // Get agent's latest plan
@@ -740,9 +872,9 @@ public record UpdateTeamMemberRequest(
     string? SpawnPromptTemplate = null,
     string? TriggerStatuses = null);
 
-public record SpawnSessionRequest(string? SessionId = null);
+public record SpawnSessionRequest(string? SessionId = null, string? SessionLogPath = null);
 public record ShutdownRequest(int? TokensUsed = null);
-public record HeartbeatRequest(string? Activity = null, int? TokensUsed = null, string? PlanFileName = null, string? PlanContent = null);
+public record HeartbeatRequest(string? Activity = null, int? TokensUsed = null, string? PlanFileName = null, string? PlanContent = null, string? SessionLogPath = null);
 
 public record AssignTaskRequest(int? TeamMemberId = null, string? AssignedBy = null);
 public record ClaimTaskRequest(string AgentName);

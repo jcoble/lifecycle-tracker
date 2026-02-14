@@ -14,5 +14,6 @@ public class AgentSession
     public string? LatestPlanFileName { get; set; }
     public string? LatestPlanContent { get; set; }
     public DateTime? LatestPlanUpdatedAt { get; set; }
+    public string? SessionLogPath { get; set; }
     public TeamMember TeamMember { get; set; } = null!;
 }

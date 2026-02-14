@@ -252,6 +252,7 @@ public class LifecycleDbContext : DbContext
             entity.Property(e => e.Status).IsRequired().HasMaxLength(50);
             entity.Property(e => e.CurrentActivity).HasMaxLength(500);
             entity.Property(e => e.LatestPlanFileName).HasMaxLength(200);
+            entity.Property(e => e.SessionLogPath).HasMaxLength(500);
             entity.HasIndex(e => e.TeamMemberId);
             entity.HasOne(e => e.TeamMember)
                 .WithMany(tm => tm.Sessions)

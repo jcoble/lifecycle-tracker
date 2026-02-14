@@ -13,7 +13,8 @@
 	import ClipboardDropZone from './ClipboardDropZone.svelte';
 	import { formatRelative, formatDate } from '$lib/utils/date';
 	import { buildCommitUrl, buildBranchUrl } from '$lib/utils/git';
-	import { X, Send, Paperclip, GitBranch, MessageSquare, Trash2, FlaskConical, Play, Square, Terminal, Copy, Check } from '@lucide/svelte';
+	import type { TranscriptEntry } from '$lib/types';
+	import { X, Send, Paperclip, GitBranch, MessageSquare, Trash2, FlaskConical, Play, Square, Terminal, Copy, Check, ChevronDown, ChevronRight, Wrench } from '@lucide/svelte';
 	import { markTestAgentActive, markTestAgentStopped } from '$lib/stores/testAgents';
 
 	let {
@@ -67,6 +68,11 @@
 	let resizing = $state(false);
 	let resizeStartY = $state(0);
 	let resizeStartHeight = $state(0);
+
+	// Rich transcript state
+	let transcriptEntries = $state<TranscriptEntry[]>([]);
+	let transcriptSince = $state(0);
+	let expandedTools = $state<Set<string>>(new Set());
 
 	const VALID_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
 		Backlog: ['Todo', 'Cancelled'],
@@ -164,11 +170,18 @@
 
 	async function pollAgentLog() {
 		try {
-			const data = await tasksApi.getAgentLog(task.id, logOffset);
-			if (data.lines.length > 0) {
-				logLines = [...logLines, ...data.lines];
-				logOffset = data.totalLines;
-				// Auto-scroll if user hasn't scrolled up
+			const data = await tasksApi.getTranscript(task.id, transcriptSince);
+			if (data.entries.length > 0) {
+				transcriptEntries = [...transcriptEntries, ...data.entries];
+				// Also update flat logLines for backward compat (copy, message count)
+				for (const entry of data.entries) {
+					for (const c of entry.content) {
+						if (c.type === 'text' && c.text) logLines.push(c.text.slice(0, 300));
+						else if (c.type === 'tool_use') logLines.push(`» ${c.name}: ${c.input_summary?.slice(0, 120) ?? ''}`);
+					}
+				}
+				logLines = logLines;  // trigger reactivity
+				transcriptSince = data.totalLines;
 				if (!userScrolledUp && logContainer) {
 					requestAnimationFrame(() => {
 						if (logContainer) logContainer.scrollTop = logContainer.scrollHeight;
@@ -179,8 +192,7 @@
 			if (data.running) {
 				markTestAgentActive(task.id);
 			}
-			// Stop polling if agent finished and we got all lines
-			if (!data.running && data.lines.length === 0 && logLines.length > 0) {
+			if (!data.running && data.entries.length === 0 && transcriptEntries.length > 0) {
 				markTestAgentStopped(task.id);
 				stopLogPolling();
 			}
@@ -193,6 +205,9 @@
 		if (logPollingTimer) return;
 		logOffset = 0;
 		logLines = [];
+		transcriptEntries = [];
+		transcriptSince = 0;
+		expandedTools = new Set();
 		userScrolledUp = false;
 		pollAgentLog(); // immediate first poll
 		logPollingTimer = setInterval(pollAgentLog, 2000);
@@ -269,9 +284,25 @@
 	}
 
 	function handleCopyLog() {
-		navigator.clipboard.writeText(logLines.join('\n'));
+		// Build readable copy text from transcript
+		const lines: string[] = [];
+		for (const entry of transcriptEntries) {
+			for (const c of entry.content) {
+				if (c.type === 'text' && c.text) lines.push(c.text);
+				else if (c.type === 'tool_use') lines.push(`» ${c.name}: ${c.input_summary ?? ''}`);
+				else if (c.type === 'tool_result' && c.content) lines.push(`  → ${c.content}`);
+			}
+		}
+		navigator.clipboard.writeText(lines.join('\n'));
 		copyFeedback = true;
 		setTimeout(() => { copyFeedback = false; }, 2000);
+	}
+
+	function toggleToolExpand(uuid: string) {
+		const next = new Set(expandedTools);
+		if (next.has(uuid)) next.delete(uuid);
+		else next.add(uuid);
+		expandedTools = next;
 	}
 
 	// Clean up polling on component destroy
@@ -703,13 +734,13 @@
 							</span>
 							Live
 						</span>
-					{:else if logLines.length > 0}
+					{:else if transcriptEntries.length > 0}
 						<span class="text-[10px] text-text-tertiary">Finished</span>
 					{/if}
 				</div>
 				<div class="flex items-center gap-2">
-					<span class="text-[10px] text-text-tertiary">{logLines.length} lines</span>
-					{#if logLines.length > 0}
+					<span class="text-[10px] text-text-tertiary">{transcriptEntries.length} entries</span>
+					{#if transcriptEntries.length > 0}
 						<button
 							onclick={handleCopyLog}
 							class="rounded px-1.5 py-0.5 text-[10px] font-medium text-text-tertiary transition-colors hover:bg-surface-hover hover:text-text-primary"
@@ -738,24 +769,93 @@
 			<div
 				bind:this={logContainer}
 				onscroll={handleLogScroll}
-				class="flex-1 overflow-y-auto bg-[#0d0d1a] px-3 py-2 font-mono text-xs leading-relaxed text-green-300/80"
+				class="flex-1 overflow-y-auto bg-[#0d0d1a] px-3 py-2 text-xs leading-relaxed"
 			>
-				{#if logLines.length === 0}
-					<span class="text-text-tertiary italic">No output yet{agentRunning ? ' — waiting for agent...' : ''}</span>
+				{#if transcriptEntries.length === 0}
+					<span class="text-text-tertiary italic font-mono">No output yet{agentRunning ? ' — waiting for agent...' : ''}</span>
 				{:else}
-					{#each logLines as line}
-						{#if line.startsWith('[You]')}
-							<div class="whitespace-pre-wrap break-all text-blue-400 font-semibold">{line}</div>
-						{:else if line.startsWith('[Error]')}
-							<div class="whitespace-pre-wrap break-all text-red-400">{line}</div>
-						{:else}
-							<div class="whitespace-pre-wrap break-all">{line}</div>
-						{/if}
-					{/each}
+					<div class="space-y-2">
+						{#each transcriptEntries as entry (entry.uuid)}
+							{#if entry.role === 'user'}
+								<!-- User messages -->
+								{#each entry.content as item}
+									{#if item.type === 'text' && item.text}
+										<div class="flex gap-2">
+											<span class="shrink-0 text-[10px] font-bold text-blue-400 uppercase mt-0.5 w-10">You</span>
+											<div class="whitespace-pre-wrap break-words text-blue-300/90">{item.text}</div>
+										</div>
+									{:else if item.type === 'tool_result'}
+										<!-- tool results from user turns: show as collapsible -->
+										{#if item.content}
+											<div class="ml-12 border-l-2 border-border/30 pl-2">
+												<button
+													onclick={() => toggleToolExpand(entry.uuid + '-result')}
+													class="flex items-center gap-1 text-[10px] text-text-tertiary hover:text-text-secondary transition-colors"
+												>
+													{#if expandedTools.has(entry.uuid + '-result')}
+														<ChevronDown class="h-2.5 w-2.5" />
+													{:else}
+														<ChevronRight class="h-2.5 w-2.5" />
+													{/if}
+													<span class={item.is_error ? 'text-red-400' : ''}>
+														{item.is_error ? 'Error' : 'Result'}: {item.content.slice(0, 60)}{item.content.length > 60 ? '...' : ''}
+													</span>
+												</button>
+												{#if expandedTools.has(entry.uuid + '-result')}
+													<pre class="mt-1 whitespace-pre-wrap break-words text-text-tertiary/70 text-[10px] max-h-40 overflow-auto {item.is_error ? 'text-red-400/70' : ''}">{item.content}</pre>
+												{/if}
+											</div>
+										{/if}
+									{/if}
+								{/each}
+							{:else if entry.role === 'assistant'}
+								<!-- Assistant messages -->
+								{#each entry.content as item, ci}
+									{#if item.type === 'text' && item.text}
+										<div class="flex gap-2">
+											<span class="shrink-0 text-[10px] font-bold text-green-400 uppercase mt-0.5 w-10">AI</span>
+											<div class="whitespace-pre-wrap break-words text-green-300/80">{item.text}</div>
+										</div>
+									{:else if item.type === 'tool_use'}
+										<div class="ml-12">
+											<button
+												onclick={() => toggleToolExpand(entry.uuid + '-' + ci)}
+												class="flex items-center gap-1.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-amber-400/80 hover:bg-amber-500/10 transition-colors"
+											>
+												<Wrench class="h-2.5 w-2.5" />
+												<span>{item.name}</span>
+												{#if !expandedTools.has(entry.uuid + '-' + ci) && item.input_summary}
+													<span class="text-text-tertiary font-normal truncate max-w-[250px]">{item.input_summary}</span>
+												{/if}
+												{#if expandedTools.has(entry.uuid + '-' + ci)}
+													<ChevronDown class="h-2.5 w-2.5" />
+												{:else}
+													<ChevronRight class="h-2.5 w-2.5" />
+												{/if}
+											</button>
+											{#if expandedTools.has(entry.uuid + '-' + ci) && item.input_summary}
+												<pre class="mt-1 ml-4 whitespace-pre-wrap break-words text-text-tertiary/60 text-[10px] max-h-32 overflow-auto">{item.input_summary}</pre>
+											{/if}
+										</div>
+									{/if}
+								{/each}
+							{:else if entry.role === 'system'}
+								<!-- System messages (result, plain text) -->
+								{#each entry.content as item}
+									{#if item.type === 'text' && item.text}
+										<div class="flex gap-2">
+											<span class="shrink-0 text-[10px] font-bold text-purple-400 uppercase mt-0.5 w-10">SYS</span>
+											<div class="whitespace-pre-wrap break-words text-purple-300/60">{item.text}</div>
+										</div>
+									{/if}
+								{/each}
+							{/if}
+						{/each}
+					</div>
 				{/if}
 			</div>
 			<!-- Message input (visible when log has output — auto-stops agent if still running) -->
-			{#if logLines.length > 0}
+			{#if transcriptEntries.length > 0}
 				<div class="flex items-center gap-2 border-t border-border bg-[#1a1a2e] px-3 py-2">
 					<input
 						type="text"

@@ -1,4 +1,4 @@
-import type { TeamMember, AgentEscalation } from '$lib/types';
+import type { TeamMember, AgentEscalation, TranscriptOutput } from '$lib/types';
 import { api } from '../client';
 
 export const team = {
@@ -48,6 +48,11 @@ export const team = {
 
 	cleanupStale: () =>
 		api.post('/teams/cleanup-stale', {}),
+
+	getOutput: (teamMemberId: number, since?: string) => {
+		const params = since ? `?since=${encodeURIComponent(since)}` : '';
+		return api.get<TranscriptOutput>(`/teams/${teamMemberId}/output${params}`);
+	},
 };
 
 export const escalations = {

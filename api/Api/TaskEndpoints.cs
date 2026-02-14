@@ -595,6 +595,10 @@ public static class TaskEndpoints
             return Results.Ok(new { lines = parsedLines, totalLines = allLines.Length, running, sessionId });
         });
 
+        // Rich transcript from stream-json log (parsed into structured entries)
+        group.MapGet("/{taskId:int}/transcript", (int taskId, string? since)
+            => GetTranscript(taskId, since));
+
         // Stop a running test agent for a task
         group.MapPost("/{taskId:int}/stop-agent", async (int taskId, SseService sse) =>
         {
@@ -730,6 +734,181 @@ public static class TaskEndpoints
     /// Parses stream-json lines from claude CLI into human-readable log entries.
     /// Handles both stream-json format and plain text (e.g. timestamps from hook scripts).
     /// </summary>
+    private static IResult GetTranscript(int taskId, string? since)
+    {
+        var testLog = $"/tmp/test-agent-{taskId}.log";
+        var resolveLog = $"/tmp/resolve-agent-{taskId}.log";
+        var testExists = File.Exists(testLog);
+        var resolveExists = File.Exists(resolveLog);
+        string logFile;
+        if (testExists && resolveExists)
+            logFile = File.GetLastWriteTimeUtc(resolveLog) > File.GetLastWriteTimeUtc(testLog) ? resolveLog : testLog;
+        else if (resolveExists)
+            logFile = resolveLog;
+        else
+            logFile = testLog;
+
+        if (!File.Exists(logFile))
+            return Results.Ok(new { entries = Array.Empty<object>(), totalLines = 0, running = false });
+
+        var running = false;
+        foreach (var pidFile in new[] { $"/tmp/test-agent-{taskId}.pid", $"/tmp/resolve-agent-{taskId}.pid" })
+        {
+            if (!File.Exists(pidFile)) continue;
+            var pidText = File.ReadAllText(pidFile).Trim();
+            if (int.TryParse(pidText, out var pid))
+            {
+                try { Process.GetProcessById(pid); running = true; break; }
+                catch { try { File.Delete(pidFile); } catch { } }
+            }
+        }
+
+        var sinceIndex = 0;
+        if (since is not null && int.TryParse(since, out var s))
+            sinceIndex = s;
+
+        var allLines = File.ReadAllLines(logFile);
+        var entries = new List<object>();
+        var index = 0;
+
+        foreach (var line in allLines)
+        {
+            if (string.IsNullOrWhiteSpace(line)) { index++; continue; }
+
+            try
+            {
+                using var doc = JsonDocument.Parse(line);
+                var root = doc.RootElement;
+                var type = root.TryGetProperty("type", out var typeEl) ? typeEl.GetString() : null;
+
+                if (type != "user" && type != "assistant" && type != "result")
+                {
+                    index++;
+                    continue;
+                }
+
+                if (index < sinceIndex) { index++; continue; }
+
+                var uuid = root.TryGetProperty("uuid", out var u) ? u.GetString() : $"line-{index}";
+
+                if (type == "result")
+                {
+                    var cost = root.TryGetProperty("cost_usd", out var c) ? c.GetDouble() : 0;
+                    var turns = root.TryGetProperty("num_turns", out var nt) ? nt.GetInt32() : 0;
+                    var isError = root.TryGetProperty("is_error", out var ie) && ie.GetBoolean();
+                    entries.Add(new
+                    {
+                        uuid, index, role = "system",
+                        content = new object[]
+                        {
+                            new { type = "text", text = isError
+                                ? $"Agent failed after {turns} turns (${cost:F4})"
+                                : $"Agent finished ({turns} turns, ${cost:F4})" }
+                        }
+                    });
+                    index++;
+                    continue;
+                }
+
+                if (!root.TryGetProperty("message", out var message)) { index++; continue; }
+
+                var role = message.TryGetProperty("role", out var r) ? r.GetString() : type;
+                var contentArr = message.TryGetProperty("content", out var ca) ? ca : default;
+
+                var contentItems = new List<object>();
+                if (contentArr.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in contentArr.EnumerateArray())
+                    {
+                        var itemType = item.TryGetProperty("type", out var it) ? it.GetString() : "text";
+
+                        if (itemType == "text")
+                        {
+                            var text = item.TryGetProperty("text", out var t) ? t.GetString() : "";
+                            if (!string.IsNullOrWhiteSpace(text))
+                                contentItems.Add(new { type = "text", text });
+                        }
+                        else if (itemType == "tool_use")
+                        {
+                            var name = item.TryGetProperty("name", out var n) ? n.GetString() : "unknown";
+                            var inputSummary = "";
+                            if (item.TryGetProperty("input", out var inp) && inp.ValueKind == JsonValueKind.Object)
+                            {
+                                var parts = new List<string>();
+                                foreach (var prop in inp.EnumerateObject())
+                                {
+                                    var val = prop.Value.ValueKind switch
+                                    {
+                                        JsonValueKind.String => prop.Value.GetString()?.Length > 100
+                                            ? prop.Value.GetString()![..100] + "..."
+                                            : prop.Value.GetString(),
+                                        JsonValueKind.Number => prop.Value.GetRawText(),
+                                        JsonValueKind.True or JsonValueKind.False => prop.Value.GetRawText(),
+                                        _ => $"({prop.Value.ValueKind})"
+                                    };
+                                    parts.Add($"{prop.Name}: {val}");
+                                }
+                                inputSummary = string.Join(", ", parts);
+                            }
+                            contentItems.Add(new { type = "tool_use", name, input_summary = inputSummary });
+                        }
+                        else if (itemType == "tool_result")
+                        {
+                            var resultContent = "";
+                            if (item.TryGetProperty("content", out var tc))
+                            {
+                                if (tc.ValueKind == JsonValueKind.String)
+                                {
+                                    resultContent = tc.GetString()?.Length > 300
+                                        ? tc.GetString()![..300] + "..."
+                                        : tc.GetString() ?? "";
+                                }
+                                else if (tc.ValueKind == JsonValueKind.Array)
+                                {
+                                    var texts = new List<string>();
+                                    foreach (var rc in tc.EnumerateArray())
+                                    {
+                                        if (rc.TryGetProperty("text", out var txt))
+                                        {
+                                            var sv = txt.GetString() ?? "";
+                                            texts.Add(sv.Length > 300 ? sv[..300] + "..." : sv);
+                                        }
+                                    }
+                                    resultContent = string.Join("\n", texts);
+                                }
+                            }
+                            var isError = item.TryGetProperty("is_error", out var ie) && ie.GetBoolean();
+                            contentItems.Add(new { type = "tool_result", content = resultContent, is_error = isError });
+                        }
+                    }
+                }
+                else if (contentArr.ValueKind == JsonValueKind.String)
+                {
+                    var text = contentArr.GetString();
+                    if (!string.IsNullOrWhiteSpace(text))
+                        contentItems.Add(new { type = "text", text });
+                }
+
+                if (contentItems.Count > 0)
+                    entries.Add(new { uuid, index, role, content = contentItems });
+            }
+            catch (JsonException)
+            {
+                if (index >= sinceIndex)
+                {
+                    entries.Add(new
+                    {
+                        uuid = $"line-{index}", index, role = "system",
+                        content = new object[] { new { type = "text", text = line } }
+                    });
+                }
+            }
+            index++;
+        }
+
+        return Results.Ok(new { entries, totalLines = allLines.Length, running });
+    }
+
     private static string[] ParseStreamJsonLines(string[] rawLines)
     {
         var result = new List<string>();

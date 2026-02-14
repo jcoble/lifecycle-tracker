@@ -3,11 +3,76 @@
 	import { team } from '$lib/api/endpoints/team';
 	import { activity as activityApi } from '$lib/api/endpoints/activity';
 	import { getCurrentProjectId } from '$lib/stores/project.svelte';
-	import type { MonitorAgent } from '$lib/types';
-	import { Bot, Clock, Eye, Cpu, Zap, Activity, X } from '@lucide/svelte';
+	import type { MonitorAgent, TranscriptEntry } from '$lib/types';
+	import { Bot, Clock, Eye, Cpu, Zap, Activity, X, Terminal, ChevronDown, ChevronRight, Wrench } from '@lucide/svelte';
 
 	let selectedPlan = $state<{ agentName: string; fileName: string; content: string; updatedAt: string } | null>(null);
 	let loadingPlan = $state(false);
+
+	// Agent output viewer state
+	let outputAgent = $state<{ id: number; agentName: string } | null>(null);
+	let outputEntries = $state<TranscriptEntry[]>([]);
+	let outputSince = $state<string | undefined>(undefined);
+	let outputPollingTimer = $state<ReturnType<typeof setInterval> | null>(null);
+	let outputContainer = $state<HTMLDivElement | null>(null);
+	let outputUserScrolled = $state(false);
+	let outputExpandedTools = $state<Set<string>>(new Set());
+
+	async function pollOutput() {
+		if (!outputAgent) return;
+		try {
+			const data = await team.getOutput(outputAgent.id, outputSince);
+			if (data.entries.length > 0) {
+				outputEntries = [...outputEntries, ...data.entries];
+				outputSince = data.entries[data.entries.length - 1].timestamp;
+				if (!outputUserScrolled && outputContainer) {
+					requestAnimationFrame(() => {
+						if (outputContainer) outputContainer.scrollTop = outputContainer.scrollHeight;
+					});
+				}
+			}
+		} catch {
+			// ignore
+		}
+	}
+
+	function openOutput(agent: MonitorAgent) {
+		// Toggle off if same agent
+		if (outputAgent?.id === agent.id) {
+			closeOutput();
+			return;
+		}
+		closeOutput();
+		outputAgent = { id: agent.id, agentName: agent.agentName };
+		outputEntries = [];
+		outputSince = undefined;
+		outputUserScrolled = false;
+		outputExpandedTools = new Set();
+		pollOutput();
+		outputPollingTimer = setInterval(pollOutput, 5000);
+	}
+
+	function closeOutput() {
+		if (outputPollingTimer) {
+			clearInterval(outputPollingTimer);
+			outputPollingTimer = null;
+		}
+		outputAgent = null;
+		outputEntries = [];
+	}
+
+	function handleOutputScroll() {
+		if (!outputContainer) return;
+		const { scrollTop, scrollHeight, clientHeight } = outputContainer;
+		outputUserScrolled = scrollHeight - scrollTop - clientHeight > 40;
+	}
+
+	function toggleOutputTool(key: string) {
+		const next = new Set(outputExpandedTools);
+		if (next.has(key)) next.delete(key);
+		else next.add(key);
+		outputExpandedTools = next;
+	}
 
 	const monitorQuery = createQuery(() => ({
 		queryKey: ['monitor', getCurrentProjectId()],
@@ -205,18 +270,29 @@
 							{/if}
 						</div>
 
-						<!-- Plan button -->
-						{#if agent.latestPlan}
-							<button
-								onclick={() => viewPlan(agent)}
-								disabled={loadingPlan}
-								class="flex items-center gap-1.5 rounded border border-border px-2.5 py-1 text-xs text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-colors"
-							>
-								<Eye class="h-3 w-3" />
-								View Plan
-								<span class="text-text-muted">({agent.latestPlan.fileName})</span>
-							</button>
-						{/if}
+						<!-- Action buttons -->
+						<div class="flex items-center gap-2 flex-wrap">
+							{#if agent.hasOutput || agent.status === 'Active'}
+								<button
+									onclick={() => openOutput(agent)}
+									class="flex items-center gap-1.5 rounded border border-border px-2.5 py-1 text-xs transition-colors {outputAgent?.id === agent.id ? 'bg-accent/20 text-accent border-accent/40' : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'}"
+								>
+									<Terminal class="h-3 w-3" />
+									{outputAgent?.id === agent.id ? 'Hide Output' : 'View Output'}
+								</button>
+							{/if}
+							{#if agent.latestPlan}
+								<button
+									onclick={() => viewPlan(agent)}
+									disabled={loadingPlan}
+									class="flex items-center gap-1.5 rounded border border-border px-2.5 py-1 text-xs text-text-secondary hover:bg-surface-hover hover:text-text-primary transition-colors"
+								>
+									<Eye class="h-3 w-3" />
+									View Plan
+									<span class="text-text-muted">({agent.latestPlan.fileName})</span>
+								</button>
+							{/if}
+						</div>
 					</div>
 				{/each}
 			</div>
@@ -224,6 +300,104 @@
 			<div class="rounded-lg border border-border bg-surface p-8 text-center text-text-muted">
 				<Bot class="h-8 w-8 mx-auto mb-2 opacity-50" />
 				<p>No agents registered. Create team members on the Team page to get started.</p>
+			</div>
+		{/if}
+
+		<!-- Agent Output Panel -->
+		{#if outputAgent}
+			<div class="rounded-lg border border-border bg-surface overflow-hidden">
+				<div class="flex items-center justify-between px-4 py-2 bg-[#1a1a2e] border-b border-border">
+					<div class="flex items-center gap-2">
+						<Terminal class="h-3.5 w-3.5 text-accent" />
+						<span class="text-sm font-medium text-text-primary">{outputAgent.agentName}</span>
+						<span class="text-xs text-text-muted">{outputEntries.length} entries</span>
+					</div>
+					<button onclick={closeOutput} class="rounded p-1 text-text-muted hover:text-text-primary hover:bg-surface-hover transition-colors">
+						<X class="h-4 w-4" />
+					</button>
+				</div>
+				<div
+					bind:this={outputContainer}
+					onscroll={handleOutputScroll}
+					class="overflow-y-auto bg-[#0d0d1a] px-4 py-3 text-xs leading-relaxed max-h-[500px]"
+				>
+					{#if outputEntries.length === 0}
+						<span class="text-text-tertiary italic font-mono">No output yet — waiting for agent...</span>
+					{:else}
+						<div class="space-y-2">
+							{#each outputEntries as entry (entry.uuid)}
+								{#if entry.role === 'user'}
+									{#each entry.content as item}
+										{#if item.type === 'text' && item.text}
+											<div class="flex gap-2">
+												<span class="shrink-0 text-[10px] font-bold text-blue-400 uppercase mt-0.5 w-10">You</span>
+												<div class="whitespace-pre-wrap break-words text-blue-300/90">{item.text}</div>
+											</div>
+										{:else if item.type === 'tool_result' && item.content}
+											<div class="ml-12 border-l-2 border-border/30 pl-2">
+												<button
+													onclick={() => toggleOutputTool(entry.uuid + '-result')}
+													class="flex items-center gap-1 text-[10px] text-text-tertiary hover:text-text-secondary transition-colors"
+												>
+													{#if outputExpandedTools.has(entry.uuid + '-result')}
+														<ChevronDown class="h-2.5 w-2.5" />
+													{:else}
+														<ChevronRight class="h-2.5 w-2.5" />
+													{/if}
+													<span class={item.is_error ? 'text-red-400' : ''}>
+														{item.is_error ? 'Error' : 'Result'}: {item.content.slice(0, 60)}{item.content.length > 60 ? '...' : ''}
+													</span>
+												</button>
+												{#if outputExpandedTools.has(entry.uuid + '-result')}
+													<pre class="mt-1 whitespace-pre-wrap break-words text-text-tertiary/70 text-[10px] max-h-40 overflow-auto {item.is_error ? 'text-red-400/70' : ''}">{item.content}</pre>
+												{/if}
+											</div>
+										{/if}
+									{/each}
+								{:else if entry.role === 'assistant'}
+									{#each entry.content as item, ci}
+										{#if item.type === 'text' && item.text}
+											<div class="flex gap-2">
+												<span class="shrink-0 text-[10px] font-bold text-green-400 uppercase mt-0.5 w-10">AI</span>
+												<div class="whitespace-pre-wrap break-words text-green-300/80">{item.text}</div>
+											</div>
+										{:else if item.type === 'tool_use'}
+											<div class="ml-12">
+												<button
+													onclick={() => toggleOutputTool(entry.uuid + '-' + ci)}
+													class="flex items-center gap-1.5 rounded px-1.5 py-0.5 text-[10px] font-medium text-amber-400/80 hover:bg-amber-500/10 transition-colors"
+												>
+													<Wrench class="h-2.5 w-2.5" />
+													<span>{item.name}</span>
+													{#if !outputExpandedTools.has(entry.uuid + '-' + ci) && item.input_summary}
+														<span class="text-text-tertiary font-normal truncate max-w-[300px]">{item.input_summary}</span>
+													{/if}
+													{#if outputExpandedTools.has(entry.uuid + '-' + ci)}
+														<ChevronDown class="h-2.5 w-2.5" />
+													{:else}
+														<ChevronRight class="h-2.5 w-2.5" />
+													{/if}
+												</button>
+												{#if outputExpandedTools.has(entry.uuid + '-' + ci) && item.input_summary}
+													<pre class="mt-1 ml-4 whitespace-pre-wrap break-words text-text-tertiary/60 text-[10px] max-h-32 overflow-auto">{item.input_summary}</pre>
+												{/if}
+											</div>
+										{/if}
+									{/each}
+								{:else if entry.role === 'system'}
+									{#each entry.content as item}
+										{#if item.type === 'text' && item.text}
+											<div class="flex gap-2">
+												<span class="shrink-0 text-[10px] font-bold text-purple-400 uppercase mt-0.5 w-10">SYS</span>
+												<div class="whitespace-pre-wrap break-words text-purple-300/60">{item.text}</div>
+											</div>
+										{/if}
+									{/each}
+								{/if}
+							{/each}
+						</div>
+					{/if}
+				</div>
 			</div>
 		{/if}
 
