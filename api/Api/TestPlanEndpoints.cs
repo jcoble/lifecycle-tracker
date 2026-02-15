@@ -306,6 +306,22 @@ public static class TestPlanEndpoints
                 .FirstOrDefaultAsync(e => e.Id == id);
             if (exec is null) return Results.NotFound();
 
+            // Require screenshot evidence for Assertion steps with Passed/Failed status
+            if (req.Status is TestStepStatus.Passed or TestStepStatus.Failed)
+            {
+                var step = await db.TestSteps.FindAsync(req.TestStepId);
+                if (step is not null && step.StepType == TestStepType.Assertion && string.IsNullOrWhiteSpace(req.Screenshot))
+                {
+                    return Results.BadRequest(new
+                    {
+                        Error = "Screenshot required for Assertion steps. Use agent-browser to take a screenshot as evidence.",
+                        StepId = req.TestStepId,
+                        StepType = "Assertion",
+                        Status = req.Status.ToString()
+                    });
+                }
+            }
+
             var result = new TestStepResult
             {
                 TestExecutionId = id,
@@ -342,6 +358,43 @@ public static class TestPlanEndpoints
                 .Include(e => e.TestPlan)
                 .FirstOrDefaultAsync(e => e.Id == id);
             if (exec is null) return Results.NotFound();
+
+            // When completing as Passed, verify all Assertion steps have results with screenshots
+            if (req.Status == TestExecutionStatus.Passed)
+            {
+                var assertionSteps = await db.TestSteps
+                    .Where(s => s.Test.TestPlanId == exec.TestPlanId && s.StepType == TestStepType.Assertion)
+                    .Select(s => new { s.Id, s.Description })
+                    .ToListAsync();
+
+                var evidenceResults = await db.TestStepResults
+                    .Where(r => r.TestExecutionId == id)
+                    .ToListAsync();
+
+                var stepResultsByStepId = evidenceResults.ToDictionary(r => r.TestStepId);
+
+                var missing = new List<string>();
+                foreach (var step in assertionSteps)
+                {
+                    if (!stepResultsByStepId.TryGetValue(step.Id, out var result))
+                    {
+                        missing.Add($"Step #{step.Id} '{step.Description}': no result recorded");
+                    }
+                    else if (string.IsNullOrWhiteSpace(result.Screenshot))
+                    {
+                        missing.Add($"Step #{step.Id} '{step.Description}': result recorded but no screenshot evidence");
+                    }
+                }
+
+                if (missing.Count > 0)
+                {
+                    return Results.BadRequest(new
+                    {
+                        Error = "Cannot mark execution as Passed — Assertion steps missing evidence. Use agent-browser to take screenshots.",
+                        MissingEvidence = missing
+                    });
+                }
+            }
 
             exec.Status = req.Status;
             exec.CompletedAt = DateTime.UtcNow;
@@ -399,6 +452,34 @@ public static class TestPlanEndpoints
                 SourceTaskId = sourceTaskId,
                 Guidance = guidance
             });
+        });
+
+        // Serve screenshot image for a step result
+        execGroup.MapGet("/{id:int}/step-results/{resultId:int}/screenshot", async (int id, int resultId, LifecycleDbContext db) =>
+        {
+            var result = await db.TestStepResults
+                .FirstOrDefaultAsync(r => r.Id == resultId && r.TestExecutionId == id);
+            if (result is null) return Results.NotFound();
+            if (string.IsNullOrWhiteSpace(result.Screenshot)) return Results.NotFound();
+
+            // Handle base64 data (with or without data URI prefix)
+            var screenshot = result.Screenshot;
+            var contentType = "image/png";
+            if (screenshot.StartsWith("data:"))
+            {
+                var commaIndex = screenshot.IndexOf(',');
+                if (commaIndex > 0)
+                {
+                    var header = screenshot[..commaIndex]; // e.g. "data:image/png;base64"
+                    var mimeStart = header.IndexOf(':') + 1;
+                    var mimeEnd = header.IndexOf(';');
+                    if (mimeEnd > mimeStart) contentType = header[mimeStart..mimeEnd];
+                    screenshot = screenshot[(commaIndex + 1)..];
+                }
+            }
+
+            var bytes = Convert.FromBase64String(screenshot);
+            return Results.File(bytes, contentType);
         });
 
         // Check if task can complete (testing requirements met)

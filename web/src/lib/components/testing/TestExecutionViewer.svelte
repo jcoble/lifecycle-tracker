@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { TestExecution } from '$lib/types';
-	import { CheckCircle, XCircle, MinusCircle, Clock } from '@lucide/svelte';
+	import { CheckCircle, XCircle, MinusCircle, Clock, Camera } from '@lucide/svelte';
 	import { formatRelative } from '$lib/utils/date';
 
 	let { execution }: { execution: TestExecution } = $props();
@@ -78,6 +78,17 @@
 							<p class="mt-0.5 text-[10px] text-danger">{result.errorMessage}</p>
 						{/if}
 					</div>
+					{#if result.screenshot}
+						<a
+							href="/api/test-executions/{execution.id}/step-results/{result.id}/screenshot"
+							target="_blank"
+							rel="noopener"
+							class="shrink-0 text-accent hover:text-accent-hover"
+							title="View screenshot"
+						>
+							<Camera class="h-3.5 w-3.5" />
+						</a>
+					{/if}
 					<span class="shrink-0 text-[10px] text-text-tertiary">{result.durationMs}ms</span>
 				</div>
 			{/each}

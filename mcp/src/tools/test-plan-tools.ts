@@ -111,7 +111,7 @@ export function registerTestPlanTools(server: McpServer) {
       status: z.enum(['Passed', 'Failed', 'Skipped', 'Blocked']).describe('Step result'),
       actualResult: z.string().optional().describe('What actually happened'),
       errorMessage: z.string().optional().describe('Error details if failed'),
-      screenshot: z.string().optional().describe('Base64 screenshot from agent-browser'),
+      screenshot: z.string().optional().describe('Screenshot file path or base64 from agent-browser. REQUIRED for Assertion steps — the API will reject without it.'),
       durationMs: z.number().default(0).describe('Step duration in milliseconds'),
     },
     async ({ executionId, stepId, status, actualResult, errorMessage, screenshot, durationMs }) => {
