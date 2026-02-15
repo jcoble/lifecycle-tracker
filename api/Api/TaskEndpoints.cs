@@ -1104,7 +1104,7 @@ public static class TaskTransitionValidator
 
     private static readonly Dictionary<TaskStatus, HashSet<TaskStatus>> AllowedTransitions = new()
     {
-        [TaskStatus.Backlog] = new() { TaskStatus.Todo, TaskStatus.Cancelled },
+        [TaskStatus.Backlog] = new() { TaskStatus.Todo, TaskStatus.InProgress, TaskStatus.Cancelled },
         [TaskStatus.Todo] = new() { TaskStatus.InProgress, TaskStatus.Backlog, TaskStatus.Cancelled },
         [TaskStatus.InProgress] = new() { TaskStatus.Review, TaskStatus.Blocked, TaskStatus.Cancelled },
         [TaskStatus.Review] = new() { TaskStatus.Done, TaskStatus.InProgress, TaskStatus.Blocked, TaskStatus.Cancelled },
