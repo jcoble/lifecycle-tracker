@@ -1,6 +1,7 @@
 <script lang="ts">
-	import type { TestPlan } from '$lib/types';
-	import { Play, Eye, CheckCircle, XCircle, Clock, FileText, ChevronDown, ChevronRight } from '@lucide/svelte';
+	import type { TestPlan, TestStepResultItem } from '$lib/types';
+	import { Play, Eye, CheckCircle, XCircle, Clock, FileText, ChevronDown, ChevronRight, Camera } from '@lucide/svelte';
+	import { api } from '$lib/api/client';
 
 	let {
 		plan,
@@ -13,6 +14,21 @@
 	} = $props();
 
 	let expandedTests = $state<Set<number>>(new Set());
+	let stepResults = $state<Map<number, TestStepResultItem>>(new Map());
+	let resultsLoaded = $state(false);
+
+	async function loadStepResults() {
+		if (resultsLoaded || !plan.latestExecution) return;
+		try {
+			const exec = await api.get<{ stepResults?: TestStepResultItem[] }>(`/test-executions/${plan.latestExecution.id}`);
+			if (exec.stepResults) {
+				const map = new Map<number, TestStepResultItem>();
+				for (const r of exec.stepResults) map.set(r.testStepId, r);
+				stepResults = map;
+			}
+		} catch { /* best effort */ }
+		resultsLoaded = true;
+	}
 
 	const levelColors: Record<string, string> = {
 		Smoke: 'bg-blue-500/10 text-blue-400',
@@ -54,7 +70,10 @@
 	function toggleTest(testId: number) {
 		const next = new Set(expandedTests);
 		if (next.has(testId)) next.delete(testId);
-		else next.add(testId);
+		else {
+			next.add(testId);
+			loadStepResults();
+		}
 		expandedTests = next;
 	}
 </script>
@@ -157,9 +176,30 @@
 							{#if test.steps && test.steps.length > 0}
 								<div class="space-y-0.5">
 									{#each test.steps as step, i}
+										{@const result = stepResults.get(step.id)}
 										<div class="flex items-center gap-1.5 text-[10px] text-text-tertiary">
-											<span class="text-text-tertiary w-3 text-right">{i + 1}.</span>
-											<span class="truncate">{step.description}</span>
+											<span class="w-3 text-right shrink-0">{i + 1}.</span>
+											{#if result}
+												{#if result.status === 'Passed'}
+													<CheckCircle class="h-2.5 w-2.5 text-success shrink-0" />
+												{:else if result.status === 'Failed'}
+													<XCircle class="h-2.5 w-2.5 text-danger shrink-0" />
+												{:else}
+													<Clock class="h-2.5 w-2.5 text-text-tertiary shrink-0" />
+												{/if}
+											{/if}
+											<span class="truncate flex-1">{step.description}</span>
+											{#if result?.screenshot && plan.latestExecution}
+												<a
+													href="/api/test-executions/{plan.latestExecution.id}/step-results/{result.id}/screenshot"
+													target="_blank"
+													rel="noopener"
+													class="shrink-0 text-accent hover:text-accent-hover"
+													title="View screenshot"
+												>
+													<Camera class="h-3 w-3" />
+												</a>
+											{/if}
 										</div>
 									{/each}
 								</div>
