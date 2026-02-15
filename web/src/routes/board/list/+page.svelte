@@ -45,7 +45,7 @@
 	let filters = $state<Record<string, string>>({});
 	let statusFilter = $state<TaskStatus | 'All'>('All');
 
-	const statusTabs: (TaskStatus | 'All')[] = ['All', 'Todo', 'InProgress', 'Review', 'Blocked', 'Backlog'];
+	const statusTabs: (TaskStatus | 'All')[] = ['All', 'Todo', 'InProgress', 'Review', 'Blocked', 'Backlog', 'Done', 'Cancelled'];
 	const statusLabels: Record<string, string> = {
 		All: 'All',
 		Todo: 'Todo',
@@ -53,6 +53,8 @@
 		Review: 'Review',
 		Blocked: 'Blocked',
 		Backlog: 'Backlog',
+		Done: 'Done',
+		Cancelled: 'Cancelled',
 	};
 
 	let filteredPhases = $derived.by(() => {
@@ -90,14 +92,51 @@
 		if (filters.source) result = result.filter(t => t.source === filters.source);
 		if (filters.label) result = result.filter(t => t.labels?.some(l => l.id === Number(filters.label)));
 
-		// Sort by priority then ID
-		const priorityOrder: Record<string, number> = { P1: 1, P2: 2, P3: 3, P4: 4 };
-		result.sort((a, b) => {
-			const pa = priorityOrder[a.priority] ?? 99;
-			const pb = priorityOrder[b.priority] ?? 99;
-			if (pa !== pb) return pa - pb;
-			return b.id - a.id;
-		});
+		// Sort using filter bar selection, or fall back to contextual defaults
+		const sort = filters.sortBy || 'board';
+		const dir = (filters.sortDir === 'desc' ? -1 : 1);
+
+		if (sort === 'board') {
+			// Default contextual sort per status tab
+			if (statusFilter === 'Done') {
+				result.sort((a, b) => {
+					const da = a.completedAt ? new Date(a.completedAt).getTime() : 0;
+					const db = b.completedAt ? new Date(b.completedAt).getTime() : 0;
+					return db - da;
+				});
+			} else if (statusFilter === 'Cancelled') {
+				result.sort((a, b) => {
+					const da = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+					const db = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+					return db - da;
+				});
+			} else {
+				const priorityOrder: Record<string, number> = { P1: 1, P2: 2, P3: 3, P4: 4 };
+				result.sort((a, b) => {
+					const pa = priorityOrder[a.priority] ?? 99;
+					const pb = priorityOrder[b.priority] ?? 99;
+					if (pa !== pb) return pa - pb;
+					return b.id - a.id;
+				});
+			}
+		} else {
+			result.sort((a, b) => {
+				let va: any, vb: any;
+				if (sort === 'id') { va = a.id; vb = b.id; }
+				else if (sort === 'title') { va = a.title.toLowerCase(); vb = b.title.toLowerCase(); }
+				else if (sort === 'priority') {
+					const po: Record<string, number> = { P1: 1, P2: 2, P3: 3, P4: 4 };
+					va = po[a.priority] ?? 99; vb = po[b.priority] ?? 99;
+				}
+				else if (sort === 'createdAt') { va = a.createdAt ?? ''; vb = b.createdAt ?? ''; }
+				else if (sort === 'updatedAt') { va = a.updatedAt ?? ''; vb = b.updatedAt ?? ''; }
+				else { va = a.id; vb = b.id; }
+
+				if (va < vb) return -1 * dir;
+				if (va > vb) return 1 * dir;
+				return 0;
+			});
+		}
 		return result;
 	});
 
