@@ -455,31 +455,24 @@ public static class TestPlanEndpoints
         });
 
         // Serve screenshot image for a step result
-        execGroup.MapGet("/{id:int}/step-results/{resultId:int}/screenshot", async (int id, int resultId, LifecycleDbContext db) =>
+        execGroup.MapGet("/{id:int}/step-results/{resultId:int}/screenshot", async (int id, int resultId, LifecycleDbContext db, IWebHostEnvironment env) =>
         {
             var result = await db.TestStepResults
                 .FirstOrDefaultAsync(r => r.Id == resultId && r.TestExecutionId == id);
             if (result is null) return Results.NotFound();
             if (string.IsNullOrWhiteSpace(result.Screenshot)) return Results.NotFound();
 
-            // Handle base64 data (with or without data URI prefix)
-            var screenshot = result.Screenshot;
-            var contentType = "image/png";
-            if (screenshot.StartsWith("data:"))
-            {
-                var commaIndex = screenshot.IndexOf(',');
-                if (commaIndex > 0)
-                {
-                    var header = screenshot[..commaIndex]; // e.g. "data:image/png;base64"
-                    var mimeStart = header.IndexOf(':') + 1;
-                    var mimeEnd = header.IndexOf(';');
-                    if (mimeEnd > mimeStart) contentType = header[mimeStart..mimeEnd];
-                    screenshot = screenshot[(commaIndex + 1)..];
-                }
-            }
+            var filePath = Path.Combine(env.ContentRootPath, "uploads", "screenshots", result.Screenshot);
+            if (!File.Exists(filePath)) return Results.NotFound();
 
-            var bytes = Convert.FromBase64String(screenshot);
-            return Results.File(bytes, contentType);
+            var ext = Path.GetExtension(filePath).ToLowerInvariant();
+            var contentType = ext switch
+            {
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".webp" => "image/webp",
+                _ => "image/png"
+            };
+            return Results.File(filePath, contentType);
         });
 
         // Check if task can complete (testing requirements met)

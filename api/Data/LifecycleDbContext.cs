@@ -151,7 +151,7 @@ public class LifecycleDbContext : DbContext
             entity.HasKey(e => e.Id);
             entity.Property(e => e.ActualResult).HasMaxLength(2000);
             entity.Property(e => e.ErrorMessage).HasMaxLength(2000);
-            entity.Property(e => e.Screenshot);
+            entity.Property(e => e.Screenshot).HasMaxLength(500);
             entity.HasIndex(e => e.TestExecutionId);
             entity.HasOne(e => e.Execution)
                 .WithMany(te => te.StepResults)

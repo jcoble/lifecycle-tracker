@@ -1,6 +1,23 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { copyFile, mkdir } from 'fs/promises';
+import { existsSync } from 'fs';
+import { basename, extname, join } from 'path';
+import { randomUUID } from 'crypto';
 import { api } from '../api-client.js';
+
+const SCREENSHOTS_DIR = join(
+  process.env.LIFECYCLE_API_DIR || join(process.env.HOME || '/tmp', 'dev/tools/lifecycle/api'),
+  'uploads', 'screenshots'
+);
+
+async function copyScreenshot(filePath: string): Promise<string> {
+  await mkdir(SCREENSHOTS_DIR, { recursive: true });
+  const ext = extname(filePath) || '.png';
+  const destName = `${randomUUID()}${ext}`;
+  await copyFile(filePath, join(SCREENSHOTS_DIR, destName));
+  return destName;
+}
 
 export function registerTestPlanTools(server: McpServer) {
   server.tool(
@@ -111,16 +128,24 @@ export function registerTestPlanTools(server: McpServer) {
       status: z.enum(['Passed', 'Failed', 'Skipped', 'Blocked']).describe('Step result'),
       actualResult: z.string().optional().describe('What actually happened'),
       errorMessage: z.string().optional().describe('Error details if failed'),
-      screenshot: z.string().optional().describe('Screenshot file path or base64 from agent-browser. REQUIRED for Assertion steps — the API will reject without it.'),
+      screenshot: z.string().optional().describe('File path to screenshot saved by agent-browser (e.g. /tmp/screenshot.png). REQUIRED for Assertion steps — the API will reject without it. Pass the file path, not base64.'),
       durationMs: z.number().default(0).describe('Step duration in milliseconds'),
     },
     async ({ executionId, stepId, status, actualResult, errorMessage, screenshot, durationMs }) => {
+      let screenshotRef: string | undefined;
+      if (screenshot && existsSync(screenshot)) {
+        screenshotRef = await copyScreenshot(screenshot);
+      } else if (screenshot) {
+        // Not a valid file path — pass through as-is (could be a filename already stored)
+        screenshotRef = screenshot;
+      }
+
       const result = await api.post(`/test-executions/${executionId}/step-results`, {
         testStepId: stepId,
         status,
         actualResult,
         errorMessage,
-        screenshot,
+        screenshot: screenshotRef,
         durationMs,
       });
       return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
