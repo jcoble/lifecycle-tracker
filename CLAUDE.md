@@ -6,7 +6,7 @@ A project management tool with kanban board, test plans, and team orchestration.
 
 | Service | URL (Tailscale) | URL (Local Dev) |
 |---------|----------------|-----------------|
-| Web UI  | https://cloud-server.chimp-map.ts.net | http://localhost:5557 |
+| Web UI  | https://cloud-server.chimp-map.ts.net | http://localhost:5555 |
 | API     | https://cloud-server.chimp-map.ts.net/api | http://localhost:5556 |
 
 ## MCP Server
@@ -120,6 +120,7 @@ GET    /api/events?projectId=1       SSE stream (task:created, task:updated, etc
 ## Local Dev Rules
 
 - **Always bind to `localhost`** — never use `0.0.0.0` or `127.0.0.1` when starting services locally. Use `--urls http://localhost:PORT`.
+- **Fixed ports**: Web UI on `5555`, API on `5556`. Web UI is installed as a browser webapp — port must not change.
 
 ## Server Management
 

@@ -256,7 +256,34 @@ public static class TestPlanEndpoints
 
             await sse.BroadcastAsync("test:updated", new { PlanId = plan.Id, plan.TaskId, ExecutionId = execution.Id });
 
-            return Results.Created($"/api/test-executions/{execution.Id}", MapExecutionToDto(execution));
+            return Results.Created($"/api/test-executions/{execution.Id}", new
+            {
+                execution.Id,
+                execution.TestPlanId,
+                ExecutionMode = execution.ExecutionMode.ToString(),
+                Status = execution.Status.ToString(),
+                execution.TotalSteps,
+                execution.PassedSteps,
+                execution.FailedSteps,
+                execution.SkippedSteps,
+                execution.ExecutedBy,
+                execution.StartedAt,
+                execution.CompletedAt,
+                execution.FailureReason,
+                Tests = plan.Tests.OrderBy(t => t.OrderIndex).Select(t => new
+                {
+                    t.Id,
+                    t.Name,
+                    Steps = t.Steps.OrderBy(s => s.OrderIndex).Select(s => new
+                    {
+                        s.Id,
+                        s.OrderIndex,
+                        StepType = s.StepType.ToString(),
+                        s.Description,
+                        s.ExpectedResult
+                    })
+                })
+            });
         });
 
         // Get execution details

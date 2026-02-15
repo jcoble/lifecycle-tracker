@@ -498,8 +498,9 @@ public static class AiEndpoints
 
             // Enforce: Feature/Bug/Refactor tasks must include tests when requesting review
             var requiresTests = new[] { TaskType.Feature, TaskType.Bug, TaskType.Refactor }.Contains(task.Type);
-            if (requiresTests && (req.BackendTests is null or { Count: 0 }) && (req.TestPlan?.Tests is null or { Count: 0 }))
-                return Results.BadRequest(new { Error = "Feature/Bug/Refactor tasks require at least one test. Provide backendTests[] (unit/integration tests) and/or testPlan (UI test scenarios) when requesting review." });
+            var existingTestPlans = await db.TestPlans.Where(tp => tp.TaskId == task.Id).AnyAsync();
+            if (requiresTests && !existingTestPlans && (req.BackendTests is null or { Count: 0 }) && (req.TestPlan?.Tests is null or { Count: 0 }))
+                return Results.BadRequest(new { Error = "Feature/Bug/Refactor tasks require at least one test. Provide backendTests[] (unit/integration tests) and/or testPlan (UI test scenarios) when requesting review, or create a test plan on the task first." });
 
             var oldStatus = task.Status;
             task.Status = TaskStatus.Review;
@@ -514,51 +515,63 @@ public static class AiEndpoints
             var uiTestCount = 0;
             if (req.TestPlan?.Tests is { Count: > 0 })
             {
-                var testPlan = new TestPlan
+                // Check if a UI test plan already exists on this task (e.g., created in TDD red phase)
+                var existingUiPlan = await db.TestPlans
+                    .Include(tp => tp.Tests)
+                    .FirstOrDefaultAsync(tp => tp.TaskId == task.Id && tp.Tests.Any(t => t.Type == TestType.UI));
+                if (existingUiPlan != null)
                 {
-                    TaskId = task.Id,
-                    Name = req.TestPlan.TestPlanName ?? $"Test plan for: {task.Title}",
-                    RequiredLevel = Enum.TryParse<TestLevel>(req.TestPlan.TestLevel, out var level) ? level : TestLevel.Smoke,
-                    Status = TestPlanStatus.Draft,
-                    Source = TestPlanSource.AI_Generated,
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
-                };
-                for (int ti = 0; ti < req.TestPlan.Tests.Count; ti++)
-                {
-                    var t = req.TestPlan.Tests[ti];
-                    var test = new Test
-                    {
-                        OrderIndex = ti,
-                        Name = t.Name,
-                        Description = t.Description,
-                        Type = Enum.TryParse<TestType>(t.Type, out var tt) ? tt : TestType.UI,
-                        Status = TestStatus.Created,
-                        Framework = t.Framework,
-                        CreatedAt = DateTime.UtcNow
-                    };
-                    if (t.Steps is { Count: > 0 })
-                    {
-                        for (int si = 0; si < t.Steps.Count; si++)
-                        {
-                            var s = t.Steps[si];
-                            test.Steps.Add(new TestStep
-                            {
-                                OrderIndex = si,
-                                StepType = Enum.TryParse<TestStepType>(s.StepType, out var st) ? st : TestStepType.Action,
-                                Description = s.Description,
-                                ExpectedResult = s.ExpectedResult,
-                                AutomationCommand = s.AutomationCommand,
-                                CreatedAt = DateTime.UtcNow
-                            });
-                        }
-                    }
-                    testPlan.Tests.Add(test);
+                    uiTestPlanId = existingUiPlan.Id;
+                    uiTestCount = existingUiPlan.Tests.Count;
                 }
-                db.TestPlans.Add(testPlan);
-                await db.SaveChangesAsync();
-                uiTestPlanId = testPlan.Id;
-                uiTestCount = req.TestPlan.Tests.Count;
+                else
+                {
+                    var testPlan = new TestPlan
+                    {
+                        TaskId = task.Id,
+                        Name = req.TestPlan.TestPlanName ?? $"Test plan for: {task.Title}",
+                        RequiredLevel = Enum.TryParse<TestLevel>(req.TestPlan.TestLevel, out var level) ? level : TestLevel.Smoke,
+                        Status = TestPlanStatus.Draft,
+                        Source = TestPlanSource.AI_Generated,
+                        CreatedAt = DateTime.UtcNow,
+                        UpdatedAt = DateTime.UtcNow
+                    };
+                    for (int ti = 0; ti < req.TestPlan.Tests.Count; ti++)
+                    {
+                        var t = req.TestPlan.Tests[ti];
+                        var test = new Test
+                        {
+                            OrderIndex = ti,
+                            Name = t.Name,
+                            Description = t.Description,
+                            Type = Enum.TryParse<TestType>(t.Type, out var tt) ? tt : TestType.UI,
+                            Status = TestStatus.Created,
+                            Framework = t.Framework,
+                            CreatedAt = DateTime.UtcNow
+                        };
+                        if (t.Steps is { Count: > 0 })
+                        {
+                            for (int si = 0; si < t.Steps.Count; si++)
+                            {
+                                var s = t.Steps[si];
+                                test.Steps.Add(new TestStep
+                                {
+                                    OrderIndex = si,
+                                    StepType = Enum.TryParse<TestStepType>(s.StepType, out var st) ? st : TestStepType.Action,
+                                    Description = s.Description,
+                                    ExpectedResult = s.ExpectedResult,
+                                    AutomationCommand = s.AutomationCommand,
+                                    CreatedAt = DateTime.UtcNow
+                                });
+                            }
+                        }
+                        testPlan.Tests.Add(test);
+                    }
+                    db.TestPlans.Add(testPlan);
+                    await db.SaveChangesAsync();
+                    uiTestPlanId = testPlan.Id;
+                    uiTestCount = req.TestPlan.Tests.Count;
+                }
             }
 
             // Create backend test plan on the SOURCE task
