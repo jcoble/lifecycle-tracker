@@ -133,11 +133,11 @@ export function registerTestPlanTools(server: McpServer) {
     },
     async ({ executionId, stepId, status, actualResult, errorMessage, screenshot, durationMs }) => {
       let screenshotRef: string | undefined;
-      if (screenshot && existsSync(screenshot)) {
+      if (screenshot) {
+        if (!existsSync(screenshot)) {
+          return { content: [{ type: 'text' as const, text: JSON.stringify({ error: `Screenshot file not found: ${screenshot}. Pass a valid file path from agent-browser, not base64 data.` }) }], isError: true };
+        }
         screenshotRef = await copyScreenshot(screenshot);
-      } else if (screenshot) {
-        // Not a valid file path — pass through as-is (could be a filename already stored)
-        screenshotRef = screenshot;
       }
 
       const result = await api.post(`/test-executions/${executionId}/step-results`, {
